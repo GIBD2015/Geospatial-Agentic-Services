@@ -1,0 +1,1072 @@
+import os
+import io
+import sys
+import re
+import json
+import time
+import math
+import random
+import traceback
+import warnings
+import platform
+from typing import Any, Dict, List, Optional, Tuple, Union
+import pandas as pd
+import geopandas as gpd
+import numpy as np
+
+import logging
+logging.getLogger().setLevel(logging.INFO)
+logging.getLogger("httpx").setLevel(logging.ERROR)
+logging.getLogger("openai").setLevel(logging.ERROR)
+
+from gas_server.core.file_naming import build_output_filename
+from gas_server.core.geo_agent import GeoAgent
+try:
+    from openai import OpenAI
+except ImportError:
+    OpenAI = None
+
+from gas_server.core.llm_client import build_llm_client, format_service_name
+from dotenv import load_dotenv
+load_dotenv()
+from gas_server.core.config import DATA_DIR, PROJECT_ROOT, ensure_runtime_dirs
+
+ensure_runtime_dirs()
+
+BASE_DIR = str(PROJECT_ROOT)
+
+
+class VectorAnalysisAgent(GeoAgent):
+    """
+    An adaptive, code-centric spatial analysis agent.
+    It uses Python execution as its primary tool for loading, inspection, and analysis.
+    Now with persistent registry visibility and explicit reuse guidance.
+    """
+
+    agent_id = "vector_analysis_agent"
+    agent_name = "Vector Analysis Agent"
+    agent_version = "2.1.0"
+    agent_description = "Runs vector GIS analysis and transformation workflows."
+    requires_input_datasets = True
+
+    def __init__(
+        self,
+        api_key: Optional[str] = None,
+        model: str | None = None,
+        graph_path: str = os.path.join(BASE_DIR, "gas_server", "agents", "graph.json"),
+        documents_path: str = os.path.join(BASE_DIR, "gas_server", "agents", "documents.json"),
+        triples_path: str = os.path.join(BASE_DIR, "gas_server", "agents", "triples.txt"),
+        debug: bool = True,
+    ):
+        if OpenAI is None:
+            raise ImportError("Please install the 'openai' package.")
+
+        super().__init__(api_key=api_key, model=model or "gpt-5.4", output_dir=DATA_DIR / self.agent_id)
+        self.service_name = format_service_name(self.agent_name)
+        self.client = build_llm_client(
+            service_name=self.service_name,
+            openai_api_key=self.api_key,
+        )
+        self.debug = debug
+
+        # --- Internal State / Runtime Memory ---
+        self.runtime_memory = {
+            "datasets": {},        # Metadata about loaded sets
+            "facts": [],           # Discovered truths during runtime
+            "errors": [],          # Historical errors and their resolutions
+            "plan_status": "init",
+            "assumptions": []
+        }
+
+        # --- Artifact Storage (persistent across tool calls) ---
+        self.registry: Dict[str, Any] = {}  # Actual DataFrames held in memory
+        self.final_artifact_key: Optional[str] = None
+        self.final_artifact_keys: List[str] = []
+
+        # --- Metrics ---
+        self.code_executions = 0
+        self.kb_searches = 0
+
+        # Knowledge base paths
+        self.graph_path = graph_path
+        self.documents_path = documents_path
+        self.triples_path = triples_path
+        self.kb_loaded = False
+        self._knowledge_index = []
+
+        self._setup_system_prompt()
+        self._define_tools()
+
+    def _setup_system_prompt(self):
+        self.system_prompt = {
+            "role": "system",
+            "content": (
+                "You are a Senior Geospatial Systems Architect and Data Analyst.\n"
+                "Your objective is to solve spatial tasks by writing and executing Python code.\n\n"
+
+                "IMPORTANT – PERSISTENT STATE & REUSE:\n"
+                "- The environment has a `registry` dictionary that persists across all `execute_script` calls.\n"
+                "- Any GeoDataFrame or DataFrame you assign to a variable and also store in `registry` (e.g., `registry['my_data'] = my_data`) will be available in future calls.\n"
+                "- **Do NOT re‑import libraries** – `geopandas as gpd`, `pandas as pd`, `numpy as np` are already imported and available.\n"
+                "- **Do NOT re‑read files** if the data is already in `registry`. First check `registry.keys()` (you can write a small script to inspect it).\n"
+                "- Use `registry['varname']` to retrieve previously loaded data.\n"
+                "- The helper function `list_registry()` returns a readable summary of all cached objects.\n\n"
+                "- ALWAYS keep the geometry column in spatial outputs.\n"
+                "- Save vector outputs as GeoPackage by default unless the user explicitly asks for GeoJSON.\n"
+                "- If you are going to do a join, first try a non-spatial attribute join using stable identifiers such as GEOID/FIPS. If no reliable attribute key exists, then try a spatial join.\n"
+                "- If your task is finding radom points within a polygon, write the python code to generate random points within the polygon.\n"
+                "- If your task is calculating distance from a set of objects to another set of objects, make sure your resutls are in geojson for each ojbect.\n"
+                " - If your task is calculating distance in meter or kilometer, make sure to project your data to a projected CRS before calculating distance and then reproject back to original CRS if needed.\n\n"
+
+                "ADAPTIVE BEHAVIOR:\n"
+                "1. DYNAMIC LOADING: Write code to try different loaders (gpd.read_file, pd.read_csv, etc.) based on file extensions.\n"
+                "2. ADAPTIVE INSPECTION: Use code to check CRS, column types, null counts, and geometry validity. "
+                "When inspecting sample values, truncate any string over 40 characters with '...'.\n"
+                "3. RUNTIME MEMORY: Maintain a mental log of what you've learned. If an error occurs, analyze the traceback, "
+                "run diagnostic code if needed, and adapt your plan.\n"
+                "4. CRS HANDLING: Reason explicitly about CRS. If you are overlaying or joining two spatial sets, "
+                "check their CRS through code and reproject if necessary.\n"
+                "5. KB SEARCH: Only use `search_knowledge_base` if you are genuinely uncertain about a specific GeoPandas function "
+                "or geospatial concept. Prefer solving from your own knowledge first.\n\n"
+
+                "FINALIZING:\n"
+                "- When the task is complete, you MUST call `register_final_artifact` with the variable name of the result, or provide `variable_names` if you need to save several final artifacts (all must exist in `registry`).\n"
+                "- The result can be a GeoDataFrame (for spatial), DataFrame (for tabular), or a list/tuple containing several final artifacts.\n\n"
+
+                "EFFICIENCY:\n"
+                "- Before loading a file, write a short script that prints `registry.keys()` to see if it's already loaded.\n"
+                "- Always reuse cached objects. Avoid duplicate imports and file reads.\n"
+            )
+        }
+
+    def _define_tools(self):
+        self.tools = [
+            {
+                "type": "function",
+                "function": {
+                    "name": "execute_script",
+                    "description": "Execute a Python script. Use this for loading files, inspecting data, and performing analysis. "
+                                   "The environment already has `gpd`, `pd`, `np` imported, and a persistent `registry` dict. "
+                                   "After execution, you will receive STDOUT/ERROR plus a summary of all objects currently in `registry`.",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "script": {"type": "string", "description": "The full Python code to run."},
+                            "purpose": {"type": "string", "description": "Short explanation of why you are running this code (e.g., 'loading counties file')."}
+                        },
+                        "required": ["script"],
+                    },
+                },
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "search_knowledge_base",
+                    "description": "Search the GeoPandas handbook for help with specific spatial methods or errors.",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "query": {"type": "string"}
+                        },
+                        "required": ["query"],
+                    },
+                },
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "register_final_artifact",
+                    "description": "Mark one or more variables from the registry as the final result(s) for storage.",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "variable_name": {"type": "string", "description": "The name of the variable (GeoDataFrame or DataFrame) to save. It must be a key in `registry`."},
+                            "variable_names": {
+                                "type": "array",
+                                "items": {"type": "string"},
+                                "description": "Optional list of registry variables to save as several output artifacts."
+                            },
+                            "summary": {"type": "string", "description": "A brief description of what this final result represents."}
+                        },
+                        "required": [],
+                    },
+                },
+            }
+        ]
+
+    # --------------------------
+    # Sandbox & Execution
+    # --------------------------
+
+    def _get_prelude(self) -> str:
+        """Utility helpers injected into every execution, plus standard imports."""
+        return """
+import pandas as pd
+import geopandas as gpd
+import numpy as np
+import json
+import warnings
+from shapely.geometry import shape, mapping
+
+warnings.filterwarnings('ignore')
+
+# Helper to inspect a DataFrame/GeoDataFrame
+def inspect_df(name, df, sample_count=1):
+    info = {
+        "name": name,
+        "type": str(type(df)),
+        "rows": len(df),
+        "columns": list(df.columns),
+        "dtypes": {k: str(v) for k, v in df.dtypes.items()}
+    }
+    if isinstance(df, gpd.GeoDataFrame):
+        info["crs"] = str(df.crs)
+        info["geometry_type"] = df.geometry.geom_type.unique().tolist() if not df.empty else []
+    
+    samples = {}
+    if not df.empty:
+        s_df = df.head(sample_count)
+        for col in df.columns:
+            val = s_df[col].iloc[0]
+            val_str = str(val)
+            if len(val_str) > 40:
+                val_str = val_str[:40] + "..."
+            samples[col] = val_str
+    info["samples"] = samples
+    # print(f"--- INSPECTION: {name} ---")
+    # print(json.dumps(info, indent=2))
+    # print("--------------------------")
+
+# Helper to list current registry contents
+def list_registry():
+    # print("--- CURRENT REGISTRY ---")
+    for key, obj in registry.items():
+        obj_type = "GeoDataFrame" if isinstance(obj, gpd.GeoDataFrame) else "DataFrame" if isinstance(obj, pd.DataFrame) else type(obj).__name__
+        rows = len(obj) if hasattr(obj, '__len__') else 'N/A'
+    #     print(f"  {key}: {obj_type}, rows={rows}")
+    # print("------------------------")
+
+"""
+
+    def _execute_in_sandbox(self, script: str) -> Dict[str, Any]:
+        self.code_executions += 1
+        full_code = self._get_prelude() + "\n" + script
+
+        stdout_capture = io.StringIO()
+        old_stdout = sys.stdout
+        sys.stdout = stdout_capture
+
+        # Local context for exec
+        exec_locals = {"registry": self.registry}
+
+        error = None
+        try:
+            exec(full_code, {}, exec_locals)
+            # Update registry with any new DataFrames/GeoDataFrames created in the script
+            for k, v in exec_locals.items():
+                if isinstance(v, (pd.DataFrame, gpd.GeoDataFrame)):
+                    self.registry[k] = v
+        except Exception:
+            error = traceback.format_exc()
+        finally:
+            sys.stdout = old_stdout
+
+        # Build registry summary to return as part of the tool response
+        registry_summary = []
+        for key, obj in self.registry.items():
+            if isinstance(obj, (pd.DataFrame, gpd.GeoDataFrame)):
+                typ = "GeoDataFrame" if isinstance(obj, gpd.GeoDataFrame) else "DataFrame"
+                rows = len(obj)
+                registry_summary.append(f"  {key}: {typ}, {rows} rows")
+            else:
+                registry_summary.append(f"  {key}: {type(obj).__name__}")
+        registry_text = "\n".join(registry_summary) if registry_summary else "  (empty)"
+
+        output = stdout_capture.getvalue()
+        if error:
+            result = f"ERROR:\n{error}\n\n--- REGISTRY AFTER EXECUTION ---\n{registry_text}\n--- END REGISTRY ---"
+        else:
+            result = f"STDOUT:\n{output}\n\n--- REGISTRY AFTER EXECUTION ---\n{registry_text}\n--- END REGISTRY ---"
+
+        return {
+            "stdout": output,
+            "error": error,
+            "full_response": result,   # This will be sent back to the LLM
+            "registry_summary": registry_text
+        }
+
+    # --------------------------
+    # Knowledge Base (Lazy Load)
+    # --------------------------
+
+    def _load_kb(self):
+        if self.kb_loaded:
+            return
+        try:
+            if os.path.exists(self.graph_path):
+                with open(self.graph_path, 'r') as f:
+                    data = json.load(f)
+                    nodes = data.get("nodes", []) or data.get("value", {}).get("nodes", [])
+                    for n in nodes:
+                        self._knowledge_index.append({"text": f"{n.get('id')} {n.get('description')}", "meta": n})
+            self.kb_loaded = True
+        except Exception as e:
+            if self.debug:
+                logging.warning("KB load failed: %s", e)
+
+    def _search_kb(self, query: str) -> str:
+        self.kb_searches += 1
+        self._load_kb()
+        if not self._knowledge_index:
+            return "Knowledge base is empty or could not be loaded."
+
+        q_words = set(re.findall(r'\w+', query.lower()))
+        scored = []
+        for item in self._knowledge_index:
+            score = len(q_words.intersection(set(re.findall(r'\w+', item['text'].lower()))))
+            if score > 0:
+                scored.append((score, item))
+
+        scored.sort(key=lambda x: x[0], reverse=True)
+        results = [s[1]['text'] for s in scored[:5]]
+        return "\n".join(results) if results else "No relevant entries found."
+
+    # --------------------------
+    # Persistence & Utilities
+    # --------------------------
+
+    def _environment_info(self) -> Dict[str, Any]:
+        return {
+            "python_version": platform.python_version(),
+            "domain-specific libraries": ["geopandas", "pandas", "numpy", "shapely"]
+        }
+
+    def _generate_filename(self, task: str) -> str:
+        return build_output_filename(
+            task,
+            extension="",
+            fallback="analysis_result",
+        )
+
+    def _output_dir(self) -> str:
+        out_dir = getattr(self, "output_dir", str(DATA_DIR / self.agent_id))
+        os.makedirs(out_dir, exist_ok=True)
+        return out_dir
+
+    def _read_dataset(self, path: str) -> Union[pd.DataFrame, gpd.GeoDataFrame]:
+        ext = os.path.splitext(str(path).split("?", 1)[0])[1].lower()
+        if ext in {".csv", ".tsv"}:
+            sep = "\t" if ext == ".tsv" else ","
+            return pd.read_csv(path, sep=sep)
+        try:
+            return gpd.read_file(path)
+        except Exception:
+            return pd.read_csv(path)
+
+    def _load_input_datasets(self, dataset_paths: List[str]) -> List[Dict[str, Any]]:
+        datasets = []
+        for index, path in enumerate(dataset_paths, start=1):
+            data = self._read_dataset(path)
+            datasets.append(
+                {
+                    "index": index,
+                    "path": path,
+                    "data": data,
+                    "is_geo": isinstance(data, gpd.GeoDataFrame),
+                    "columns": list(data.columns),
+                    "rows": len(data),
+                }
+            )
+        return datasets
+
+    def _normalize_join_series(self, series: pd.Series, width: Optional[int] = None) -> pd.Series:
+        values = series.astype("string").str.strip()
+        values = values.str.replace(r"\.0$", "", regex=True)
+        values = values.str.replace(r"[^0-9A-Za-z]", "", regex=True)
+        if width:
+            numeric_mask = values.str.fullmatch(r"\d+", na=False)
+            values = values.where(~numeric_mask, values.str.zfill(width))
+        return values
+
+    def _column_score(self, column: str) -> int:
+        name = column.lower().replace("_", "")
+        scores = {
+            "geoid": 100,
+            "countyfips": 95,
+            "countyfp": 90,
+            "fips": 85,
+            "geographyid": 80,
+            "locationid": 75,
+            "tractce": 60,
+            "statefp": 40,
+        }
+        return max((score for token, score in scores.items() if token in name), default=0)
+
+    def _candidate_join_columns(self, df: pd.DataFrame) -> List[str]:
+        geometry_column = df.geometry.name if isinstance(df, gpd.GeoDataFrame) else None
+        candidates = [column for column in df.columns if column != geometry_column]
+        candidates = [column for column in candidates if self._column_score(str(column)) > 0]
+        return sorted(candidates, key=lambda column: self._column_score(str(column)), reverse=True)
+
+    def _best_attribute_join(self, left: pd.DataFrame, right: pd.DataFrame) -> Optional[Dict[str, Any]]:
+        left_candidates = self._candidate_join_columns(left)
+        right_candidates = self._candidate_join_columns(right)
+        best = None
+
+        for left_col in left_candidates:
+            for right_col in right_candidates:
+                width = 5 if any(token in f"{left_col} {right_col}".lower() for token in ("geoid", "fips", "county")) else None
+                left_key = self._normalize_join_series(left[left_col], width=width)
+                right_key = self._normalize_join_series(right[right_col], width=width)
+                left_non_null = set(left_key.dropna()) - {""}
+                right_non_null = set(right_key.dropna()) - {""}
+                if not left_non_null or not right_non_null:
+                    continue
+                overlap = left_non_null.intersection(right_non_null)
+                match_ratio = len(overlap) / max(1, min(len(left_non_null), len(right_non_null)))
+                score = match_ratio * 100 + self._column_score(str(left_col)) + self._column_score(str(right_col))
+                if overlap and (best is None or score > best["score"]):
+                    best = {
+                        "left_column": left_col,
+                        "right_column": right_col,
+                        "width": width,
+                        "overlap_count": len(overlap),
+                        "match_ratio": match_ratio,
+                        "score": score,
+                    }
+        if best and best["match_ratio"] >= 0.2:
+            return best
+        return None
+
+    def _parse_distance_meters(self, query: str) -> Optional[float]:
+        match = re.search(r"(\d+(?:\.\d+)?)\s*[- ]?\s*(miles|mile|mi|kilometers|kilometer|km|meters|meter|m)\b", query.lower())
+        if not match:
+            return None
+        value = float(match.group(1))
+        unit = match.group(2)
+        if unit in {"mile", "miles", "mi"}:
+            return value * 1609.344
+        if unit in {"kilometer", "kilometers", "km"}:
+            return value * 1000
+        return value
+
+    def _save_artifact_direct(self, obj: Union[pd.DataFrame, gpd.GeoDataFrame], task: str) -> Tuple[str, Dict[str, Any], str]:
+        out_dir = self._output_dir()
+        base_name = self._generate_filename(task)
+        if isinstance(obj, gpd.GeoDataFrame):
+            ext, driver, label = self._preferred_vector_output(task)
+            path = os.path.join(out_dir, f"{base_name}{ext}")
+            obj.to_file(path, driver=driver)
+            metadata = {"type": "vector", "dimensions": list(obj.shape), "feature_count": len(obj)}
+            return path, metadata, label
+        path = os.path.join(out_dir, f"{base_name}.csv")
+        obj.to_csv(path, index=False)
+        metadata = {"type": "table", "dimensions": list(obj.shape), "feature_count": len(obj)}
+        return path, metadata, "CSV"
+
+    def _build_direct_response(
+        self,
+        start_time: float,
+        query: str,
+        dataset_paths: List[str],
+        output_path: str,
+        metadata: Dict[str, Any],
+        summary: str,
+        script: str,
+        progress_callback=None,
+    ) -> Dict[str, Any]:
+        self.number_of_artifacts = 1 if output_path else 0
+        self._emit_progress(
+            progress_callback,
+            stage="artifact_generation",
+            message=f"I saved the deterministic vector analysis result with {metadata.get('feature_count')} record(s).",
+            data={"output_path": output_path, "metadata": metadata},
+        )
+        return {
+            "agent_name": self.agent_name,
+            "agent_version": self.agent_version,
+            "model": "deterministic",
+            "duration": f"{time.time() - start_time:.2f}s",
+            "total_input_tokens": 0,
+            "total_output_tokens": 0,
+            "inputs": {"text": query, "dataset_path": dataset_paths},
+            "outputs": {
+                "text": summary,
+                "dataset_path": output_path,
+                "dataset_paths": [output_path] if output_path else [],
+                "dataset_size": metadata,
+            },
+            "metrics": {
+                "llm_calls": 0,
+                "tool_calls": 0,
+                "number_of_artifacts": self.number_of_artifacts,
+            },
+            "environment": self._environment_info(),
+            "script": script,
+            "complementary": {
+                "Execution": {
+                    "Inputs": {"text": query, "dataset_path": dataset_paths},
+                    "Outputs": {
+                        "dataset_path": output_path,
+                        "dataset_paths": [output_path] if output_path else [],
+                        "dataset_size": metadata,
+                    },
+                },
+                "Provenance": {
+                    "Lineage": {"steps": ["deterministic vector workflow", "result validation", "artifact save"]},
+                    "Tool Calls": {"execute_script_count": 0, "search_knowledge_base_count": 0},
+                    "LLM Calls": {"total": 0},
+                },
+                "Artifacts and Logs": {
+                    "Inline Artifacts": {"generated_script": script},
+                    "Persisted Artifacts": {"paths": [output_path] if output_path else []},
+                },
+            },
+        }
+
+    def _try_deterministic_workflow(self, query: str, dataset_paths: List[str], start_time: float, progress_callback=None):
+        request = (query or "").lower()
+        if not dataset_paths:
+            return None
+
+        common_terms = ("join", "merge", "buffer", "clip", "intersect", "intersection", "spatial join")
+        if not any(term in request for term in common_terms):
+            return None
+
+        self._emit_progress(
+            progress_callback,
+            stage="input_inspection",
+            message="I detected a common vector operation and will first try a deterministic GeoPandas workflow.",
+            data={"dataset_count": len(dataset_paths)},
+        )
+        datasets = self._load_input_datasets(dataset_paths)
+        geo_datasets = [item for item in datasets if item["is_geo"]]
+        table_datasets = [item for item in datasets if not item["is_geo"]]
+
+        if any(term in request for term in ("join", "merge")) and len(datasets) >= 2:
+            result = self._try_attribute_join(query, datasets, geo_datasets, table_datasets, start_time, progress_callback)
+            if result:
+                return result
+            if "spatial" in request and len(geo_datasets) >= 2:
+                return self._try_spatial_join(query, geo_datasets, start_time, progress_callback)
+
+        if "buffer" in request and geo_datasets:
+            return self._try_buffer(query, geo_datasets[0], start_time, progress_callback)
+
+        if any(term in request for term in ("clip", "intersect", "intersection")) and len(geo_datasets) >= 2:
+            return self._try_overlay(query, geo_datasets, start_time, progress_callback)
+
+        return None
+
+    def _try_attribute_join(self, query, datasets, geo_datasets, table_datasets, start_time, progress_callback=None):
+        if not geo_datasets:
+            return None
+        left_item = geo_datasets[0]
+        right_candidates = [item for item in datasets if item is not left_item]
+        best_plan = None
+        for right_item in right_candidates:
+            plan = self._best_attribute_join(left_item["data"], right_item["data"])
+            if plan and (best_plan is None or plan["score"] > best_plan["plan"]["score"]):
+                best_plan = {"right_item": right_item, "plan": plan}
+        if not best_plan:
+            return None
+
+        left = left_item["data"].copy()
+        right = best_plan["right_item"]["data"].copy()
+        plan = best_plan["plan"]
+        width = plan["width"]
+        left_key = "__gas_join_key"
+        right_key = "__gas_join_key"
+        left[left_key] = self._normalize_join_series(left[plan["left_column"]], width=width)
+        right[right_key] = self._normalize_join_series(right[plan["right_column"]], width=width)
+
+        right_columns = [column for column in right.columns if column != "geometry"]
+        right_reduced = right[right_columns].drop_duplicates(subset=[right_key])
+        joined = left.merge(right_reduced, on=left_key, how="left", suffixes=("", "_joined"))
+        joined = gpd.GeoDataFrame(joined.drop(columns=[left_key]), geometry=left.geometry.name, crs=left.crs)
+        if right_key in joined.columns:
+            joined = joined.drop(columns=[right_key])
+
+        joined_columns = [
+            column for column in right_reduced.columns
+            if column != right_key and column not in {plan["right_column"]}
+        ]
+        matched_rows = 0
+        if joined_columns:
+            matched_rows = int(joined[joined_columns].notna().any(axis=1).sum())
+        if matched_rows == 0:
+            self._emit_progress(
+                progress_callback,
+                stage="warning",
+                message="The deterministic attribute join found candidate keys but produced zero matched rows, so I will fall back to the model-driven workflow.",
+                data=plan,
+            )
+            return None
+
+        output_path, metadata, label = self._save_artifact_direct(joined, query)
+        summary = (
+            f"Joined {left_item['rows']} spatial features with {best_plan['right_item']['rows']} table/vector records "
+            f"using {plan['left_column']} = {plan['right_column']}. "
+            f"Matched {matched_rows} output feature(s) and saved the result as {label}."
+        )
+        script = (
+            "import geopandas as gpd\nimport pandas as pd\n"
+            f"left = gpd.read_file({left_item['path']!r})\n"
+            f"right = pd.read_csv({best_plan['right_item']['path']!r})\n"
+            f"# Normalize and join {plan['left_column']} to {plan['right_column']}.\n"
+        )
+        self._emit_progress(
+            progress_callback,
+            stage="analysis_execution",
+            message=summary,
+            data={
+                "operation": "attribute_join",
+                "left_column": plan["left_column"],
+                "right_column": plan["right_column"],
+                "matched_rows": matched_rows,
+                "output_features": len(joined),
+            },
+        )
+        return self._build_direct_response(start_time, query, [item["path"] for item in datasets], output_path, metadata, summary, script, progress_callback)
+
+    def _try_spatial_join(self, query, geo_datasets, start_time, progress_callback=None):
+        left_item, right_item = geo_datasets[0], geo_datasets[1]
+        left = left_item["data"].copy()
+        right = right_item["data"].copy()
+        if left.crs and right.crs and str(left.crs) != str(right.crs):
+            right = right.to_crs(left.crs)
+        joined = gpd.sjoin(left, right.drop(columns=[]), how="left", predicate="intersects", lsuffix="left", rsuffix="right")
+        if "index_right" in joined.columns:
+            matched_rows = int(joined["index_right"].notna().sum())
+        else:
+            matched_rows = len(joined)
+        if matched_rows == 0:
+            return None
+        output_path, metadata, label = self._save_artifact_direct(joined, query)
+        summary = f"Performed a spatial join using intersects and saved {len(joined)} joined feature(s) as {label}."
+        script = "import geopandas as gpd\n# Loaded two vector datasets, aligned CRS, and ran gpd.sjoin(..., predicate='intersects').\n"
+        return self._build_direct_response(start_time, query, [item["path"] for item in geo_datasets], output_path, metadata, summary, script, progress_callback)
+
+    def _try_buffer(self, query, geo_item, start_time, progress_callback=None):
+        distance_m = self._parse_distance_meters(query)
+        if not distance_m:
+            return None
+        gdf = geo_item["data"].copy()
+        original_crs = gdf.crs
+        projected_crs = None
+        try:
+            projected_crs = gdf.estimate_utm_crs()
+        except Exception:
+            projected_crs = None
+        work = gdf.to_crs(projected_crs or "EPSG:3857") if original_crs else gdf.set_crs("EPSG:4326").to_crs("EPSG:3857")
+        work["geometry"] = work.geometry.buffer(distance_m)
+        result = work.to_crs(original_crs) if original_crs else work.to_crs("EPSG:4326")
+        output_path, metadata, label = self._save_artifact_direct(result, query)
+        summary = f"Created {distance_m:,.2f}-meter buffers for {len(result)} feature(s) and saved the result as {label}."
+        script = "import geopandas as gpd\n# Loaded vector data, projected to a meter-based CRS, buffered, and reprojected back.\n"
+        return self._build_direct_response(start_time, query, [geo_item["path"]], output_path, metadata, summary, script, progress_callback)
+
+    def _try_overlay(self, query, geo_datasets, start_time, progress_callback=None):
+        left_item, right_item = geo_datasets[0], geo_datasets[1]
+        left = left_item["data"].copy()
+        right = right_item["data"].copy()
+        if left.crs and right.crs and str(left.crs) != str(right.crs):
+            right = right.to_crs(left.crs)
+        if "clip" in (query or "").lower():
+            result = gpd.clip(left, right)
+            operation = "clip"
+        else:
+            result = gpd.overlay(left, right, how="intersection")
+            operation = "intersection"
+        if result.empty:
+            return None
+        output_path, metadata, label = self._save_artifact_direct(result, query)
+        summary = f"Completed a deterministic {operation} operation and saved {len(result)} feature(s) as {label}."
+        script = f"import geopandas as gpd\n# Loaded two vector datasets, aligned CRS, and ran GeoPandas {operation}.\n"
+        return self._build_direct_response(start_time, query, [item["path"] for item in geo_datasets], output_path, metadata, summary, script, progress_callback)
+
+    def _preferred_vector_output(self, task: str) -> Tuple[str, str, str]:
+        request = (task or "").lower()
+        if re.search(r"\b(geojson|\.geojson)\b", request) and not re.search(r"\b(geopackage|gpkg|\.gpkg)\b", request):
+            return ".geojson", "GeoJSON", "GeoJSON"
+        return ".gpkg", "GPKG", "GeoPackage"
+
+    def _save_result(self, task: str) -> Tuple[List[str], Dict[str, Any], List[Dict[str, Any]]]:
+        registered_keys = self.final_artifact_keys or ([self.final_artifact_key] if self.final_artifact_key else [])
+        if not registered_keys:
+            return [], {
+                "type": None,
+                "dimensions": None,
+                "feature_count": None
+            }, []
+
+        out_dir = self._output_dir()
+        base_name = self._generate_filename(task)
+        saved_paths: List[str] = []
+        saved_artifacts: List[Dict[str, Any]] = []
+
+        for key_index, key in enumerate(registered_keys, start=1):
+            if key not in self.registry:
+                raise KeyError(f"Registered artifact '{key}' was not found in the registry.")
+            value = self.registry[key]
+            items = list(value) if isinstance(value, (list, tuple)) else [value]
+            for item_index, obj in enumerate(items, start=1):
+                is_geo = isinstance(obj, gpd.GeoDataFrame)
+                ext, driver, _ = self._preferred_vector_output(task) if is_geo else (".csv", None, "CSV")
+                suffix = f"_{key_index}"
+                if len(items) > 1:
+                    suffix += f"_{item_index}"
+                fname = f"{base_name}{suffix}{ext}"
+                path = os.path.join(out_dir, fname)
+
+                if self.debug:
+                    logging.info("Saving final vector result to: %s", path)
+
+                if is_geo:
+                    obj.to_file(path, driver=driver)
+                    metadata_type = "vector"
+                elif isinstance(obj, pd.DataFrame):
+                    obj.to_csv(path, index=False)
+                    metadata_type = "table"
+                else:
+                    raise TypeError(f"Unsupported final artifact type: {type(obj)}")
+
+                metadata = {
+                    "type": metadata_type,
+                    "dimensions": list(obj.shape),
+                    "feature_count": len(obj)
+                }
+                saved_paths.append(path)
+                saved_artifacts.append({"key": key, "path": path, "metadata": metadata})
+
+        self.number_of_artifacts = len(saved_paths)
+        primary_metadata = saved_artifacts[0]["metadata"] if saved_artifacts else {
+            "type": None,
+            "dimensions": None,
+            "feature_count": None
+        }
+        return saved_paths, primary_metadata, saved_artifacts
+
+    # --------------------------
+    # Final Script Cleaning (Optional)
+    # --------------------------
+    def _clean_final_script(self, raw_script: str, user_query: str) -> str:
+        """Ask the LLM to produce a consolidated, non-redundant version of the script."""
+        if not raw_script.strip():
+            return ""
+        try:
+            prompt = (
+                "Below is a history of executed Python scripts (separated by '# --- Step ---'). "
+                "Please produce a single, clean, and non-redundant script that accomplishes the original task. "
+                "Remove duplicate imports, repeated file reads, and unnecessary intermediate steps. "
+                "Keep only the essential code that loads data (once), performs analysis, and produces the final result. "
+                f"Original task: {user_query}\n\n"
+                f"Raw script history:\n{raw_script}\n\n"
+                "Output only the cleaned Python code, no explanations."
+            )
+            res = self.client.chat.completions.create(
+                model=self.model,
+                messages=[{"role": "user", "content": prompt}],
+                temperature=0.2
+            )
+            usage = getattr(res, "usage", None)
+            if usage:
+                self.input_tokens += usage.prompt_tokens or 0
+                self.output_tokens += usage.completion_tokens or 0
+            cleaned = res.choices[0].message.content.strip()
+            # Remove markdown code fences if present
+            cleaned = re.sub(r'^```python\n?', '', cleaned)
+            cleaned = re.sub(r'\n```$', '', cleaned)
+            return cleaned
+        except Exception as e:
+            if self.debug:
+                logging.warning("Could not clean final script: %s", e)
+            return raw_script
+
+    # --------------------------
+    # Main Loop
+    # --------------------------
+
+    def run(self, query: str, input_dataset_paths=None, progress_callback=None) -> Dict[str, Any]:
+        start_time = time.time()
+        user_query = query
+        dataset_path = self.normalize_dataset_paths(input_dataset_paths)
+        self._emit_progress(
+            progress_callback,
+            stage="start",
+            message=f"I will load the requested vector/tabular inputs, run code-driven analysis, and save a final dataset artifact from {len(dataset_path)} dataset reference(s).",
+            data={"dataset_count": len(dataset_path), "max_iterations": 40},
+        )
+
+        if self.debug:
+            # print(f"\n[Agent] Starting Task: {user_query}")
+            # print(f"[Agent] Input Datasets: {dataset_path}")
+            pass
+
+        # Reset metrics for new run
+        self.llm_calls = 0
+        self.code_executions = 0
+        self.retries = 0
+        self.kb_searches = 0
+        self.number_of_artifacts = 0
+        self.final_artifact_key = None
+        self.final_artifact_keys = []
+        self.input_tokens = 0
+        self.output_tokens = 0
+        self.registry.clear()  # start fresh
+
+        self.runtime_memory["plan_status"] = "Starting task. Identifying initial loading steps."
+
+        direct_result = self._try_deterministic_workflow(
+            user_query,
+            dataset_path,
+            start_time,
+            progress_callback=progress_callback,
+        )
+        if direct_result:
+            return direct_result
+
+        # Inject paths and initial registry state into first user message
+        user_content = f"Task: {user_query}\nFiles available: {dataset_path}\n\nInitial registry is empty."
+        messages = [self.system_prompt, {"role": "user", "content": user_content}]
+
+        final_text_response = ""
+
+        for turn in range(40):  # Max iterations
+            self._emit_progress(
+                progress_callback,
+                stage="planning",
+                message=f"I am planning the next analysis step and deciding whether to execute code, search guidance, or register the final artifact. This is iteration {turn + 1}.",
+                data={"iteration": turn + 1},
+            )
+            if self.debug:
+                # print(f"\n--- Iteration {turn + 1} ---")
+                pass
+
+            self.llm_calls += 1
+
+            try:
+                response = self.client.chat.completions.create(
+                    model=self.model,
+                    messages=messages,
+                    tools=self.tools,
+                    tool_choice="auto"
+                )
+                usage = getattr(response, "usage", None)
+                if usage:
+                    self.input_tokens += usage.prompt_tokens or 0
+                    self.output_tokens += usage.completion_tokens or 0
+            except Exception as e:
+                if self.debug:
+                    logging.warning("LLM call failed: %s", e)
+                self._emit_progress(
+                    progress_callback,
+                    stage="retry",
+                    message=f"The model call failed before the analysis could continue, so I will return the failure details: {e}",
+                )
+                # Return error with empty complementary structure
+                return {
+                    "error": f"LLM Call failed: {e}",
+                    "complementary": {
+                        "Execution": {"Inputs": {}, "Outputs": {}},
+                        "Provenance": {"Lineage": {}, "Tool Calls": {}, "LLM Calls": {}},
+                        "Artifacts and Logs": {"Inline Artifacts": {}, "Persisted Artifacts": {}}
+                    }
+                }
+
+            msg = response.choices[0].message
+            messages.append(msg)
+
+            if not msg.tool_calls:
+                if self.debug:
+                    # print("[Agent] Task completed. Preparing final response.")
+                    pass
+                self._emit_progress(
+                    progress_callback,
+                    stage="response_preparation",
+                    message="The model finished its analysis loop and provided a final text response, so I will prepare the saved output dataset.",
+                )
+                final_text_response = msg.content
+                break
+
+            for tool_call in msg.tool_calls:
+                fn_name = tool_call.function.name
+                args = json.loads(tool_call.function.arguments)
+
+                if self.debug:
+                    # print(f"[Tool Call] {fn_name}: {args.get('purpose', args.get('variable_name', args.get('query', '')))}")
+                    pass
+                tool_messages = {
+                    "execute_script": "I will execute Python analysis code in the sandbox to load, inspect, transform, or analyze the dataset.",
+                    "search_knowledge_base": "I will search the knowledge base for implementation guidance before deciding the next code step.",
+                    "register_final_artifact": "I will register the selected in-memory result as the final artifact to save.",
+                }
+                self._emit_progress(
+                    progress_callback,
+                    stage="analysis_execution",
+                    message=tool_messages.get(fn_name, f"I will run the {fn_name} tool and inspect its result."),
+                    data={"tool_name": fn_name},
+                )
+
+                result_content = ""
+
+                if fn_name == "execute_script":
+                    res = self._execute_in_sandbox(args["script"])
+                    if res["error"]:
+                        self.retries += 1
+                        self._emit_progress(
+                            progress_callback,
+                            stage="retry",
+                            message="The analysis code did not run successfully, so I will use the error feedback to revise the next step.",
+                            data={"retry_count": self.retries},
+                        )
+                        if self.debug:
+                            # print(f"[Sandbox] Execution Failed. Error length: {len(res['error'])}")
+                            pass
+                        result_content = res["full_response"]  # includes error + registry
+                        self.runtime_memory["errors"].append({"script": args["script"], "error": res["error"]})
+                    else:
+                        self._emit_progress(
+                            progress_callback,
+                            stage="code_execution",
+                            message="The analysis code ran successfully, so I will use the resulting variables and registry state for the next decision.",
+                        )
+                        if self.debug:
+                            # print(f"[Sandbox] Execution Successful. Captured output length: {len(res['stdout'])}")
+                            pass
+                        result_content = res["full_response"]  # includes stdout + registry
+                        self.runtime_memory["facts"].append(f"Executed script for: {args.get('purpose', 'unknown purpose')}")
+
+                elif fn_name == "search_knowledge_base":
+                    result_content = self._search_kb(args["query"])
+                    if self.debug:
+                        logging.info("KB search found results for: %s", args["query"])
+
+                elif fn_name == "register_final_artifact":
+                    requested_keys = args.get("variable_names") or []
+                    if not requested_keys and args.get("variable_name"):
+                        requested_keys = [args["variable_name"]]
+                    missing_keys = [name for name in requested_keys if name not in self.registry]
+                    if requested_keys and not missing_keys:
+                        self.final_artifact_keys = requested_keys
+                        self.final_artifact_key = requested_keys[0]
+                        self._emit_progress(
+                            progress_callback,
+                            stage="artifact_generation",
+                            message=f"I found {len(requested_keys)} registered final artifact variable(s) and will save them at the end.",
+                            data={"variable_names": requested_keys},
+                        )
+                        if self.debug:
+                            logging.info("Final artifacts registered: %s", requested_keys)
+                        result_content = f"Artifacts {requested_keys} registered successfully. They will be saved at the end."
+                    else:
+                        self._emit_progress(
+                            progress_callback,
+                            stage="warning",
+                            message="I could not find one or more requested final artifact variables, so I will ask the next step to create or register valid results.",
+                            data={"requested_variable_names": requested_keys, "missing_variable_names": missing_keys},
+                        )
+                        if self.debug:
+                            logging.error("Failed to register artifacts: missing %s", missing_keys or requested_keys)
+                        # Provide current registry keys to help LLM
+                        keys = list(self.registry.keys())
+                        result_content = f"Error: Missing artifact variables {missing_keys or requested_keys}. Current registry keys: {keys}. Ensure your script creates the variables and stores them in the registry."
+
+                messages.append({
+                    "role": "tool",
+                    "tool_call_id": tool_call.id,
+                    "name": fn_name,
+                    "content": result_content
+                })
+
+        # Save and Prepare Final Response
+        self._emit_progress(
+            progress_callback,
+            stage="artifact_generation",
+            message="I am saving the registered analysis result and collecting its output metadata.",
+        )
+        output_dataset_paths, output_dataset_size, saved_artifacts = self._save_result(user_query)
+        output_dataset_path = output_dataset_paths[0] if output_dataset_paths else None
+        duration_sec = time.time() - start_time
+
+        if self.debug:
+            # print(f"\n[Agent] Finished in {duration_sec:.2f}s")
+            # print(f"[Agent] Total LLM Calls: {self.llm_calls}, Script Executions: {self.code_executions}")
+            pass
+
+        # Collect raw script history
+        raw_script_parts = []
+        for m in messages:
+            if isinstance(m, dict) and m.get("tool_call_id"):
+                continue
+            if hasattr(m, "tool_calls") and m.tool_calls:
+                for tc in m.tool_calls:
+                    if tc.function.name == "execute_script":
+                        raw_script_parts.append(json.loads(tc.function.arguments)['script'])
+        raw_script = "\n# --- Step ---\n".join(raw_script_parts)
+
+        # Optional: clean the final script
+        cleaned_script = self._clean_final_script(raw_script, user_query) if raw_script else ""
+
+        # --------------------------
+        # Build the "complementary" dictionary
+        # --------------------------
+        complementary = {
+            "Execution": {
+                "Inputs": {
+                    "text": user_query,
+                    "dataset_path": dataset_path
+                },
+                "Outputs": {
+                    "dataset_path": output_dataset_path,
+                    "dataset_paths": output_dataset_paths,
+                    "dataset_size": output_dataset_size
+                }
+            },
+            "Provenance": {
+                "Lineage": {},  # not collected in this version, left blank
+                "Tool Calls": {
+                    "execute_script_count": self.code_executions,
+                    "search_knowledge_base_count": self.kb_searches,
+                    "register_final_artifact_count": len(self.final_artifact_keys or ([self.final_artifact_key] if self.final_artifact_key else []))
+                },
+                "LLM Calls": {
+                    "total": self.llm_calls
+                }
+            },
+            "Artifacts and Logs": {
+                "Inline Artifacts": {},  # not collected, left blank
+                "Persisted Artifacts": {
+                    "final_artifact_keys": self.final_artifact_keys or ([self.final_artifact_key] if self.final_artifact_key else []),
+                    "paths": output_dataset_paths,
+                    "items": saved_artifacts
+                }
+            }
+        }
+
+        return {
+            "agent_name": self.agent_name,
+            "agent_version": self.agent_version,
+            "model": self.model,
+            "duration": f"{duration_sec:.2f}s",
+            "total_input_tokens": self.input_tokens,
+            "toatal_output_tokens": self.output_tokens,
+            "inputs": {
+                "text": user_query,
+                "dataset_path": dataset_path
+            },
+            "outputs": {
+                "text": final_text_response,
+                "dataset_path": output_dataset_path,
+                "dataset_paths": output_dataset_paths,
+                "dataset_size": output_dataset_size
+            },
+            "metrics": {
+                "llm_calls": self.llm_calls,
+                "tool_calls": self.code_executions + self.kb_searches,
+                "number_of_artifacts": self.number_of_artifacts
+            },
+            "environment": self._environment_info(),
+            "script": cleaned_script,
+            "complementary": complementary
+        }

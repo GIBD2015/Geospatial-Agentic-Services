@@ -1,0 +1,131 @@
+# The ID of the data source is the name of this file: USDA_ERS_Geospatial.toml
+
+# Data source name. Should be clear, meaningful, and human readable.
+data_source_name = 'USDA ERS Geospatial (ArcGIS REST)'
+
+# provide a brief description (1 line) of the data source to inform AI whether need to use this data source.
+# Need to contain critical information such as extent and period.
+brief_description = '''
+USDA ERS provides county-level and Census-tract-level geospatial data for the US via ArcGIS REST API, covering food access, food environment, rural classifications, income, jobs, people, veterans, and SNAP participation. No API key required. Data spans multiple years (2010, 2015, 2019 for food access; 2023 release for rural atlas).
+'''
+
+handbook = '''
+No API key is required. All services are freely and publicly accessible via HTTPS only (HTTP will fail).
+The ArcGIS REST services directory root is: https://gisportal.ers.usda.gov/server/rest/services/
+Each map service exposes one or more layers. To list layers in a service, append ?f=json to the MapServer URL.
+To query a layer for tabular attribute data, use the query endpoint: {MapServer_URL}/{layerID}/query
+The standard query parameters are: where (SQL filter, use '1=1' for all records), outFields (comma-separated field names, or '*' for all), f=json, returnGeometry=false (set true only if you need geometries), outSR=4326 (output spatial reference; use 4326 for WGS84).
+ALWAYS fetch the layer metadata first at {MapServer_URL}/{layerID}?f=json to get exact field names before writing any query or filter — never assume field names.
+The County Classifications layer uses 'FIPSTXT' (string with leading zeros, e.g. '06001') and 'FIPSNUM' (integer) as the FIPS identifier fields — NOT 'FIPS', 'GEOID', or 'COUNTYFIPS'. Always read actual field names from layer metadata.
+Always extract features using [feat["attributes"] for feat in data["features"]] — do NOT use pd.json_normalize() on the full feature object as it adds an 'attributes.' prefix to all column names, causing KeyErrors on filtering.
+The API returns a maximum of 1000 records per request. Always check total record count first using returnCountOnly=true, then paginate using resultOffset and resultRecordCount.
+Always check the 'exceededTransferLimit' key in the JSON response — if true, continue paginating with resultOffset.
+Use requests.get() with a params dict — never build URLs manually with string concatenation.
+Always verify the FIPS field is a string with leading zeros before filtering (e.g., use str.zfill(5) on integer FIPS columns). FIPSTXT is already a correctly zero-padded string.
+Save tabular results as CSV using pandas. If geometry is requested, save as GeoJSON or GeoPackage using geopandas.
+The spatial reference of most services is WGS84 (EPSG:4326) or NAD83; always reproject to EPSG:4326 for output.
+Put your reply into a Python code block. Explanation or conversation can be Python comments at the beginning of the code block (enclosed by ```python and ```).
+The download code is only in a function named 'download_data()'. The last line is to execute this function.
+DO NOT handle any exceptions; we need the error information for debugging.
+
+To explore services interactively before coding, open these URLs in a browser (remove ?f=json for a readable HTML page):
+  All services:             https://gisportal.ers.usda.gov/server/rest/services/
+  Layers in a service:      https://gisportal.ers.usda.gov/server/rest/services/{folder}/{service}/MapServer
+  Fields and caps for layer: https://gisportal.ers.usda.gov/server/rest/services/{folder}/{service}/MapServer/{layerID}
+  Interactive query tester: https://gisportal.ers.usda.gov/server/rest/services/{folder}/{service}/MapServer/{layerID}/query
+The layer metadata page also reports: geometryType, maxRecordCount, supportsPagination, and advancedQueryCapabilities.
+
+Available map services and their layer contents:
+
+[Atlas of Rural and Small Town America — County level, WGS84]
+County Classifications: https://gisportal.ers.usda.gov/server/rest/services/Rural_Atlas_Data/County_Classifications/MapServer
+  Layer 0 confirmed fields: FIPSTXT, FIPSNUM, State, County, RuralUrbanContinuumCode2013, UrbanInfluenceCode2013, Metro2013, Nonmetro2013, Micropolitan2013, Type_2015_Update, Type_2015_Farming_NO, Type_2015_Manufacturing_NO, Type_2015_Mining_NO, Type_2015_Government_NO, Type_2015_Recreation_NO, Low_Education_2015_update, Low_Employment_2015_update, Population_loss_2015_update, Retirement_Destination_2015_Update, HiAmenity, HiCreativeClass2000
+Income: https://gisportal.ers.usda.gov/server/rest/services/Rural_Atlas_Data/Income/MapServer
+  Layers include: per capita income, median household income, poverty rates by county
+Jobs: https://gisportal.ers.usda.gov/server/rest/services/Rural_Atlas_Data/Jobs/MapServer
+  Layers include: employment, unemployment rates, industry employment shares by county
+People: https://gisportal.ers.usda.gov/server/rest/services/Rural_Atlas_Data/People/MapServer
+  Layers include: population, age, race, migration, education by county
+Veterans: https://gisportal.ers.usda.gov/server/rest/services/Rural_Atlas_Data/Veterans/MapServer
+  Layers include: veteran population and characteristics by county
+
+[Food Environment Atlas — County level, NAD83]
+Access and Proximity to Grocery Stores: https://gisportal.ers.usda.gov/server/rest/services/FEA/Access_and_Proximity_to_Grocery_Stores/MapServer
+Food Assistance: https://gisportal.ers.usda.gov/server/rest/services/FEA/Food_Assistance/MapServer
+Food Prices and Taxes: https://gisportal.ers.usda.gov/server/rest/services/FEA/Food_Prices_and_Taxes/MapServer
+Health and Physical Activity: https://gisportal.ers.usda.gov/server/rest/services/FEA/Health_and_Physical_Activity/MapServer
+Local Foods: https://gisportal.ers.usda.gov/server/rest/services/FEA/Local_Foods/MapServer
+Restaurant Availability and Expenditures: https://gisportal.ers.usda.gov/server/rest/services/FEA/Restaurant_Availability_and_Expenditures/MapServer
+Socioeconomic Characteristics: https://gisportal.ers.usda.gov/server/rest/services/FEA/Socioeconomic_Characteristics/MapServer
+Store Availability: https://gisportal.ers.usda.gov/server/rest/services/FEA/Store_Availability/MapServer
+State Food Insecurity: https://gisportal.ers.usda.gov/server/rest/services/FEA/State_Food_Insecurity/MapServer
+
+[Food Access Research Atlas — Census TRACT level, Web Mercator]
+Food Access 2010: https://gisportal.ers.usda.gov/server/rest/services/FARA/FARA_2010/MapServer
+Food Access 2015: https://gisportal.ers.usda.gov/server/rest/services/FARA/FARA_2015/MapServer
+Food Access 2019: https://gisportal.ers.usda.gov/server/rest/services/FARA/FARA_2019/MapServer
+  Layers include: low-income and low-access tract flags, distance to nearest supermarket, population counts
+  This is the ONLY tract-level service in ERS. All other services are county-level.
+
+[SNAP Data System — County level, NAD83]
+SNAP Benefits: https://gisportal.ers.usda.gov/server/rest/services/SNAP/SNAP_Benefits/MapServer
+SNAP Participation: https://gisportal.ers.usda.gov/server/rest/services/SNAP/SNAP_Participation/MapServer
+SNAP Participation per Person in Poverty: https://gisportal.ers.usda.gov/server/rest/services/SNAP/SNAP_Participation_per_Person_in_Poverty/MapServer
+
+Geographic scale summary: county is the standard level for all services EXCEPT Food Access Research Atlas (FARA) which is Census-tract level. There is no state-level, block group, or individual-level data.
+'''
+
+code_example = '''
+import requests
+import pandas as pd
+
+def download_data():
+    base_url = "https://gisportal.ers.usda.gov/server/rest/services/Rural_Atlas_Data/County_Classifications/MapServer"
+    layer_id = 0
+    query_url = f"{base_url}/{layer_id}/query"
+
+    # --- Step 1: Always fetch layer metadata first to get exact field names ---
+    layer_meta = requests.get(f"{base_url}/{layer_id}", params={"f": "json"})
+    layer_meta.raise_for_status()
+    fields = [f["name"] for f in layer_meta.json().get("fields", [])]
+    print("Available fields:", fields)
+
+    # --- Step 2: Get total record count ---
+    count_resp = requests.get(query_url, params={
+        "where": "1=1", "returnCountOnly": "true", "f": "json"
+    })
+    count_resp.raise_for_status()
+    total_count = count_resp.json()["count"]
+    print(f"Total records: {total_count}")
+
+    # --- Step 3: Paginate and extract attributes directly (NOT pd.json_normalize) ---
+    all_records = []
+    for offset in range(0, total_count, 1000):
+        resp = requests.get(query_url, params={
+            "where"            : "1=1",
+            "outFields"        : "*",
+            "f"                : "json",
+            "returnGeometry"   : "false",
+            "resultOffset"     : offset,
+            "resultRecordCount": 1000,
+        })
+        resp.raise_for_status()
+        data = resp.json()
+        # Extract attributes directly — clean column names with no 'attributes.' prefix
+        all_records.extend([feat["attributes"] for feat in data.get("features", [])])
+        print(f"Fetched {len(all_records)} / {total_count} records")
+
+    df = pd.DataFrame(all_records)
+
+    # --- Step 4: Filter by state using FIPSTXT (already zero-padded string) ---
+    # California FIPS prefix = '06'; always use FIPSTXT not FIPSNUM for string filtering
+    california_df = df[df["FIPSTXT"].str.startswith("06")].copy()
+    print(f"California counties: {len(california_df)}")
+
+    # --- Step 5: Save ---
+    output_file = "California_Rural_Urban_Continuum.csv"
+    california_df.to_csv(output_file, index=False)
+    print(f"Saved to {output_file}")
+
+download_data()
+'''

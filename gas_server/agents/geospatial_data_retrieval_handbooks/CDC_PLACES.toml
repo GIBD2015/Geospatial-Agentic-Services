@@ -1,0 +1,81 @@
+# The ID of the data source is the name of this file: CDC_PLACES.toml
+
+# Data source name. Should be clear, meaningful, and human readable.
+data_source_name = 'CDC PLACES'
+
+# provide a brief description (1 line) of the data source to inform AI whether need to use this data source.
+# Need to contain critical information such as extent and period.
+brief_description = '''
+CDC PLACES provides county-level, census tract-level, city/place-level, and ZCTA-level chronic disease, health outcomes, risk behaviors, disability, and health status estimates for the entire United States. Data available from BRFSS years 2019 to 2023 across multiple release versions.
+'''
+
+# Put the technical requirements or details for the data source. One line for a requirement. No need to number them.
+handbook = '''
+CDC PLACES data is accessed via the Socrata Open Data API (SODA) at https://data.cdc.gov/resource/{DATASET_ID}.json.
+IMPORTANT: Each PLACES release has its own dataset ID. The "latest" IDs (swc5-untb for county, cwsq-ngmh for tract) are rolling and get overwritten with each new release. Older releases have fixed IDs. Each dataset ID contains only ONE year of data.
+County-level dataset IDs (Open Data format): 2025 release (BRFSS 2023) = 'swc5-untb'; 2023 release (BRFSS 2021) = 'h3ej-a9ec'; 2022 release (BRFSS 2020) = 'duw2-7jbt'; 2021 release (BRFSS 2019) = 'pqpp-u99h'.
+Census tract-level dataset IDs (Open Data format): 2025 release (BRFSS 2023) = 'cwsq-ngmh'; 2023 release (BRFSS 2021) = 'em5e-5hvn'.
+City/Place-level dataset IDs (Open Data format): 2025 release (BRFSS 2023) = 'eav7-hnsx'; 2023 release = 'krqc-563j'.
+To get data for a specific BRFSS year, you must use the dataset ID whose release contains that year. For example, for BRFSS 2021 county data use 'h3ej-a9ec', not 'swc5-untb'.
+Before downloading, always verify the available year in a dataset by querying: $select=year&$where=measureid='OBESITY'&$group=year&$order=year DESC.
+All column names are lowercase: year, stateabbr, statedesc, locationname, locationid, data_value, data_value_type, measureid, countyname, countyfips, totalpopulation, geolocation.
+The county-level dataset uses 'locationname' for the county name. The tract-level dataset has both 'countyname' and 'locationname' (the tract FIPS).
+The safe columns to use in $select are: year, stateabbr, locationname, locationid, data_value, data_value_type, measureid. Not all columns (e.g., statedesc, totalpopulation, geolocation, countyname, countyfips) are available across all datasets and releases; using unavailable columns will cause a 400 error.
+Use 'measureid' (not 'measure') to filter by health indicator. Common measureids include: OBESITY, DIABETES, BPHIGH, CASTHMA, CHD, COPD, CSMOKING, DEPRESSION, LPA, BINGE, ACCESS2, CHECKUP, DENTAL, CHOLSCREEN, CANCER, ARTHRITIS, DISABILITY, MHLTH, GHLTH.
+Use "data_value_type = 'Crude prevalence'" for crude rates or "data_value_type = 'Age-adjusted prevalence'" for age-adjusted rates.
+The 'year' field is stored as a string, so filter with year = '2023' (quoted), not year = 2023.
+Not all states are available at the census tract level. Before downloading tract data for a specific state, verify availability by querying: $select=stateabbr&$where=measureid='OBESITY'&$group=stateabbr.
+The SODA API has a maximum of 50000 rows per request. Use $limit and $offset with $order for pagination when downloading large datasets (e.g., all tracts nationwide). Always include $order (e.g., $order=locationid) when paginating.
+The 'data_value' field is returned as a string; convert to numeric using pd.to_numeric(df['data_value'], errors='coerce').
+The 'geolocation' field contains a GeoJSON Point with coordinates as {'type': 'Point', 'coordinates': [lon, lat]}.
+You need to create Python code to download and save the data. Another program will execute your code directly.
+Put your reply into a Python code block. Explanation or conversation can be Python comments at the beginning of the code block (enclosed by ```python and ```).
+The download code is only in a function named 'download_data()'. The last line is to execute this function.
+Throw an error if the program fails to download the data; no need to handle the exceptions.
+If the file saving format is not given in the tasks, save the downloaded data as a CSV file.
+'''
+
+code_example = '''
+import requests
+import pandas as pd
+
+def download_data():
+    BASE_URL = "https://data.cdc.gov/resource"
+
+    # Dataset ID lookup:
+    # County:  2025 release (BRFSS 2023) = 'swc5-untb'
+    #          2023 release (BRFSS 2021) = 'h3ej-a9ec'
+    #          2022 release (BRFSS 2020) = 'duw2-7jbt'
+    #          2021 release (BRFSS 2019) = 'pqpp-u99h'
+    # Tract:   2025 release (BRFSS 2023) = 'cwsq-ngmh'
+    #          2023 release (BRFSS 2021) = 'em5e-5hvn'
+    # Place:   2025 release (BRFSS 2023) = 'eav7-hnsx'
+    #          2023 release = 'krqc-563j'
+
+    DATASET_ID = "swc5-untb"  # County level, latest release
+
+    params = {
+       "$select": "year, stateabbr, locationname, locationid, data_value, data_value_type, measureid",
+        "$where": (
+            "measureid = 'OBESITY' "
+            "AND data_value_type = 'Crude prevalence' "
+            "AND stateabbr = 'AL'"
+        ),
+        "$order": "year DESC",
+        "$limit": 50000
+    }
+
+    url = f"{BASE_URL}/{DATASET_ID}.json"
+
+    response = requests.get(url, params=params)
+    response.raise_for_status()
+
+    df = pd.DataFrame(response.json())
+    df["data_value"] = pd.to_numeric(df["data_value"], errors="coerce")
+
+    output_file = "cdc_places_obesity_AL.csv"
+    df.to_csv(output_file, index=False)
+    print(f"Saved {len(df)} rows to {output_file}")
+
+download_data()
+'''

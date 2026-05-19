@@ -1,0 +1,162 @@
+{
+  "profile": {
+    "agent_id": "web_mapping_app_agent",
+    "name": "Web Mapping App Agent",
+    "description": "This agent develops browser-ready web mapping applications from one or more vector, raster, or tabular geospatial datasets. It uses an LLM to interpret user instructions, inspect input data, select suitable web mapping libraries and app UI patterns, generate executable Python/HTML/JavaScript code, and return the final result as an HTML application file.",
+    "version": "1.0.0",
+    "base_url": "https://www.geospatial-agentic-services.online/agents/web_mapping_app_agent",
+    "last_updated": "2026-05-16",
+    "provider": {
+      "name": "Geoinformation and Big Data Research Lab (GIBD)",
+      "website": "https://giscience.psu.edu",
+      "contacts": [
+        {
+          "name": "Zhenlong Li",
+          "email": "zhenlong@psu.edu"
+        }
+      ]
+    },
+    "default_model": "gpt-5.2"
+  },
+  "keywords": [
+    "interactive map",
+    "web mapping app",
+    "geospatial web app",
+    "HTML",
+    "JavaScript",
+    "Leaflet",
+    "Folium",
+    "web map",
+    "dashboard",
+    "sidebar",
+    "filter",
+    "layer control",
+    "legend"
+  ],
+  "skills": [
+    {
+      "skill_id": "web_mapping_app_development",
+      "name": "Web Mapping App Development",
+      "description": "Generates a browser-ready HTML web mapping application from provided geospatial datasets using LLM-guided code generation and Folium/Leaflet-style visualization methods.",
+      "constraints": {
+        "spatial": "Supports common vector formats readable by GeoPandas, tabular data readable by Pandas, and common raster formats readable by Rasterio. Raster rendering may require simplified overlays depending on the data and requested style.",
+        "temporal": null,
+        "other": [
+          "The primary output is an HTML file.",
+          "The generated app can include maps, layer controls, legends, popups, side panels, filters, summary sections, linked tables, charts, and other lightweight browser UI elements when useful.",
+          "A real Leaflet/Folium layer control is required by default; sidebar checkboxes may supplement it but should not replace it.",
+          "Legends should be compact and placed in a sidebar or bottom-right control area rather than stretched horizontally across the map.",
+          "The agent does not download external datasets during app generation.",
+          "Generated code is executed with a timeout and retried before a deterministic fallback is used.",
+          "Large vector datasets may produce large HTML artifacts."
+        ]
+      }
+    }
+  ],
+  "execute_task": {
+    "operation_id": "execute_task",
+    "name": "ExecuteTask",
+    "description": "Submits a natural-language geospatial task to the agent. The task.mode field controls sync, async, or stream execution.",
+    "request_schema": "https://www.geospatial-agentic-services.online/schemas/execute_task_request.schema.json",
+    "response_schema": "https://www.geospatial-agentic-services.online/schemas/task_response.schema.json",
+    "modes": [
+      "sync",
+      "async",
+      "stream"
+    ],
+    "task": {
+      "instructions": {
+        "required": true,
+        "description": "Natural-language task instructions."
+      }
+    },
+    "inputs": {
+      "input_datasets": {
+        "required": true,
+        "description": "Required array of input datasets. Each item may be an HTTP/HTTPS URL, a server-accessible path, or a base64-encoded file object with filename, data, and optional mime_type.",
+        "supported_item_types": [
+          "URL",
+          "server_path",
+          "encoded_file_object"
+        ]
+      }
+    },
+    "outputs": {
+      "artifact_delivery": {
+        "required": false,
+        "default": "URL",
+        "allowed_values": [
+          "URL",
+          "Encoded"
+        ],
+        "description": "How generated artifacts are delivered in the standard response: 'URL' (default) or 'Encoded'."
+      },
+      "primary_artifacts": [
+        {
+          "type": "web_mapping_app",
+          "formats": [
+            "HTML"
+          ],
+          "required": true,
+          "description": "Browser-ready HTML web mapping application with map layers, a real Leaflet/Folium layer control, title, and user-requested app behavior such as popups, compact legends, filters, side panels, charts, or tables when appropriate."
+        }
+      ]
+    },
+    "parameters": {
+      "model": {
+        "required": false,
+        "default": "gpt-5.2",
+        "description": "Optional model override. If omitted, the agent uses its default model."
+      },
+      "requested_skill": {
+        "required": false,
+        "description": "Advanced optional skill-selection hint. Most clients should omit this."
+      }
+    },
+    "credentials": {
+      "required": true,
+      "one_of": [
+        "OPENAI_API_KEY",
+        "GIBD_API_KEY"
+      ],
+      "description": "Provide one model execution credential in the request credentials object."
+    }
+  },
+  "conformance": {
+    "gas_version": "1.0.0",
+    "schemas": {
+      "describe_agent": "https://www.geospatial-agentic-services.online/schemas/describe_agent.schema.json",
+      "task_response": "https://www.geospatial-agentic-services.online/schemas/task_response.schema.json",
+      "execute_task_request": "https://www.geospatial-agentic-services.online/schemas/execute_task_request.schema.json"
+    }
+  },
+  "provenance_and_reproducibility": {
+    "provenance": {
+      "supported": true,
+      "description": "Includes llm_calls, tool_calls, token usage, duration, number_of_artifacts, lineage, and fallback usage in the response provenance and complementary sections."
+    },
+    "reproducibility": {
+      "supported": true,
+      "description": "Returns generated Python code when LLM code generation succeeds, along with runtime environment details and output artifact paths."
+    },
+    "validation": {
+      "supported": true,
+      "description": "Validates that the HTML output exists and checks required web mapping app elements such as map container, real Leaflet/Folium layer control, visible title, and requested or value-based legends when applicable. The agent also injects safety styles to keep common layer controls and legends visible and compact."
+    }
+  },
+  "governance": {
+    "access_control": {
+      "description": "Allowed roles set to ['all'] via the extension profile. No role-based access control is enforced."
+    },
+    "operation_policy": {
+      "description": "Generated Python code executes with a timeout and retry limit. The agent must use only provided datasets and should not download external datasets during web app generation."
+    },
+    "review_policy": {
+      "description": "output_review_required is set to false. The agent performs automated HTML/map-app element validation but no human-in-the-loop validation is required."
+    },
+    "policy_notes": "Web mapping app outputs should be reviewed by users for cartographic accuracy, classification suitability, data interpretation, accessibility, and publication readiness."
+  },
+  "extensions": {
+    "description": "This agent uses LLM-guided Python code generation plus Leaflet/Folium-style web mapping patterns to create HTML web mapping apps with basemaps, popups, layer controls, titles, legends, side panels, filters, summary sections, and managed downloadable artifacts."
+  }
+}

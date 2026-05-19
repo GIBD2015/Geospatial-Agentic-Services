@@ -1,0 +1,106 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "gas"
+version = "0.1.0"
+description = "Geospatial Agent Server reference implementation."
+readme = "README.md"
+requires-python = ">=3.10"
+license = "MIT"
+authors = [
+  { name = "Geoinformation and Big Data Research Lab (GIBD)" }
+]
+keywords = [
+  "geospatial",
+  "agentic services",
+  "GAS",
+  "OGC",
+  "geospatial AI",
+]
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "Intended Audience :: Developers",
+  "Intended Audience :: Science/Research",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3 :: Only",
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
+  "Programming Language :: Python :: 3.14",
+  "Topic :: Scientific/Engineering :: GIS",
+]
+dependencies = [
+  "Flask>=3.0,<4.0",
+  "flask-cors>=4.0,<7.0",
+  "requests>=2.31,<3.0",
+  "python-dotenv>=1.0,<2.0",
+  "pydantic>=2.0,<3.0",
+  "openai>=1.0,<2.0",
+  "geopandas>=0.14",
+  "shapely>=2.0",
+  "pyproj>=3.6",
+  "rasterio>=1.3",
+  "rioxarray>=0.15",
+  "pandas>=2.0",
+  "numpy>=1.24",
+  "scipy>=1.10",
+  "matplotlib>=3.7",
+  "mapclassify>=2.6",
+  "folium>=0.15",
+  "libpysal>=4.14",
+  "esda>=2.8",
+  "giddy>=2.3",
+  "inequality>=1.1",
+  "momepy>=0.11",
+  "pointpats>=2.5",
+  "segregation>=2.5",
+  "spaghetti>=1.7",
+  "access>=1.1",
+  "gwlearn>=0.2",
+  "mgwr>=2.2",
+  "spglm>=1.1",
+  "spint>=1.0",
+  "spopt>=0.7",
+  "spreg>=1.8",
+  "splot>=1.1",
+  "tobler>=0.13; python_version < '3.14'",
+  "tomli>=2.0",
+  "openpyxl>=3.1",
+  "pyarrow>=14.0",
+]
+
+[project.optional-dependencies]
+test = [
+  "pytest>=8.0,<9.0",
+]
+
+[project.scripts]
+gas-server = "gas_server.entrypoints.gas_server:main"
+
+[tool.setuptools]
+packages = [
+  "gas_client",
+  "gas_server",
+  "gas_server.core",
+  "gas_server.agents",
+  "gas_server.services",
+  "gas_server.capabilities",
+  "gas_server.entrypoints",
+  "gas_server.schemas",
+]
+
+[tool.setuptools.package-data]
+gas_server = ["static/*"]
+"gas_server.capabilities" = ["*.json"]
+"gas_server.schemas" = ["*.json"]
+"gas_server.agents" = [
+  "geospatial_data_retrieval_handbooks/*.toml",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
+addopts = "-q"

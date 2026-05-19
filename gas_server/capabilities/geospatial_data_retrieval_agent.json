@@ -1,0 +1,258 @@
+{
+  "profile": {
+    "agent_id": "geospatial_data_retrieval_agent",
+    "name": "Geospatial Data Retrieval Agent",
+    "description": "This agent interprets a user data request, matches it to the most suitable supported source, and uses the handbook guidance for that source. It generates and executes download logic, then normalizes the output into a usable geospatial dataset. It is best suited for general-purpose data acquisition from supported external sources including CDC PLACES, NYT COVID-19 data, OpenStreetMap, OpenTopography, OpenWeather, US Census Bureau, USGS Earthquakes, Natural Earth, USDA ERS, and EPA Air Quality System.",
+    "version": "1.0.0",
+    "base_url": "https://www.geospatial-agentic-services.online/agents/geospatial_data_retrieval_agent",
+    "last_updated": "2026-04-28",
+    "provider": {
+      "name": "Geoinformation and Big Data Research Lab (GIBD)",
+      "website": "https://giscience.psu.edu",
+      "contacts": [
+        {
+          "name": "Temitope Akinboyewa",
+          "email": "tea5209@psu.edu"
+        }
+      ]
+    },
+    "default_model": "gpt-4o"
+  },
+  "keywords": [
+    "data discovery",
+    "data retrieval",
+    "download",
+    "handbook",
+    "census",
+    "osm",
+    "geospatial dataset"
+  ],
+  "skills": [
+    {
+      "skill_id": "geospatial_data_retrieval",
+      "name": "Geospatial Data Retrieval",
+      "description": "Identifies the optimal data source, generates specific Python downloading scripts based on technical handbooks, executes the script with up to 10 retry attempts, and packages the result into a standardized format such as GeoPackage, GeoJSON, GeoTIFF, Shapefile, or CSV.",
+      "constraints": {
+        "spatial": "Dependent on the data source selected (e.g., Census Bureau and USDA are US-only; OpenStreetMap and Natural Earth are global).",
+        "temporal": "Dependent on the data source (e.g., NYT COVID-19 data is restricted to 2020-01-21 to 2023-03-23).",
+        "other": [
+          "Code execution will retry debugging up to 10 times upon failure.",
+          "Vector output is consolidated into a single GeoPackage by default when possible; explicit user requests for GeoJSON or other supported formats are honored when practical.",
+          "Must map to one of the explicitly supported data source handbooks."
+        ]
+      }
+    }
+  ],
+  "execute_task": {
+    "operation_id": "execute_task",
+    "name": "ExecuteTask",
+    "description": "Submits a natural-language geospatial task to the agent. The task.mode field controls sync, async, or stream execution.",
+    "request_schema": "https://www.geospatial-agentic-services.online/schemas/execute_task_request.schema.json",
+    "response_schema": "https://www.geospatial-agentic-services.online/schemas/task_response.schema.json",
+    "modes": [
+      "sync",
+      "async",
+      "stream"
+    ],
+    "task": {
+      "instructions": {
+        "required": true,
+        "description": "Natural-language task instructions."
+      }
+    },
+    "inputs": {
+      "input_datasets": {
+        "required": false,
+        "description": "Optional array of input datasets. Each item may be an HTTP/HTTPS URL, a server-accessible path, or a base64-encoded file object with filename, data, and optional mime_type.",
+        "supported_item_types": [
+          "URL",
+          "server_path",
+          "encoded_file_object"
+        ]
+      }
+    },
+    "outputs": {
+      "artifact_delivery": {
+        "required": false,
+        "default": "URL",
+        "allowed_values": [
+          "URL",
+          "Encoded"
+        ],
+        "description": "How generated artifacts are delivered in the standard response: 'URL' (default) or 'Encoded'."
+      },
+      "primary_artifacts": [
+        {
+          "type": "dataset",
+          "formats": [
+            "GeoJSON",
+            "GeoPackage",
+            "GeoTIFF",
+            "Shapefile",
+            "CSV",
+            "source-specific geospatial files"
+          ],
+          "required": true,
+          "description": "Downloaded or generated geospatial dataset artifact."
+        }
+      ]
+    },
+    "parameters": {
+      "model": {
+        "required": false,
+        "default": "gpt-4o",
+        "description": "Optional model override. If omitted, the agent uses its default model."
+      },
+      "requested_skill": {
+        "required": false,
+        "description": "Advanced optional skill-selection hint. Most clients should omit this."
+      }
+    },
+    "credentials": {
+      "required": true,
+      "one_of": [
+        "OPENAI_API_KEY",
+        "GIBD_API_KEY"
+      ],
+      "description": "Provide one model execution credential in the request credentials object."
+    }
+  },
+  "conformance": {
+    "gas_version": "1.0.0",
+    "schemas": {
+      "describe_agent": "https://www.geospatial-agentic-services.online/schemas/describe_agent.schema.json",
+      "task_response": "https://www.geospatial-agentic-services.online/schemas/task_response.schema.json",
+      "execute_task_request": "https://www.geospatial-agentic-services.online/schemas/execute_task_request.schema.json"
+    }
+  },
+  "provenance_and_reproducibility": {
+    "provenance": {
+      "supported": true,
+      "description": "Includes llm_calls, tool_calls, token usage (input_tokens, output_tokens), duration, and number of artifacts in the response provenance section."
+    },
+    "reproducibility": {
+      "supported": true,
+      "description": "Returns the exact Python script used for download execution in the execution.code.script field, along with environment details and selected data source."
+    },
+    "validation": {
+      "supported": false,
+      "description": "Agent checks code execution success but does not validate the quality or completeness of downloaded data."
+    }
+  },
+  "governance": {
+    "access_control": {
+      "description": "Allowed roles set to ['all'] via the extension profile. No role-based access control is enforced."
+    },
+    "operation_policy": {
+      "description": "Python code execution with up to 10 retry attempts. Vector output is normalized to GeoPackage by default unless another supported format is explicitly requested. Data sources are selected based on technical handbooks."
+    },
+    "review_policy": {
+      "description": "output_review_required is set to false. No human-in-the-loop validation is required."
+    },
+    "policy_notes": "If the agent is used, please cite the relevant research on geospatial AI agents."
+  },
+  "extensions": {
+    "description": "This agent supports data retrieval from CDC PLACES, NYT COVID-19, ESRI World Imagery, OpenStreetMap, OpenTopography, OpenWeather, US Census Bureau, USGS Earthquakes, Natural Earth, USDA ERS, and EPA AQS. Each source has a dedicated technical handbook that guides the code generation process.",
+    "data_sources": [
+      {
+        "source_id": "CDC_PLACES",
+        "name": "CDC PLACES",
+        "description": "CDC PLACES provides county-level, census tract-level, city/place-level, and ZCTA-level chronic disease, health outcomes, risk behaviors, disability, and health status estimates for the entire United States. No API key is required. Data portal: https://www.cdc.gov/places/tools/data-portal.html",
+        "credential_required": false
+      },
+      {
+        "source_id": "COVID_NYT",
+        "name": "New York Times COVID-19 Data",
+        "description": "Cumulative counts of COVID-19 cases and deaths in the United States at the state and county level over time from 2020-01-21 to 2023-03-23. No API key is required. Repository: https://github.com/nytimes/covid-19-data",
+        "credential_required": false
+      },
+      {
+        "source_id": "EPA_AQS",
+        "name": "EPA Air Quality System (AQS)",
+        "description": "EPA AQS provides daily and annual air quality monitoring data for PM2.5, PM10, ozone, NO2, SO2, CO, lead, and other pollutants in the United States. Data is available from the 1980s onward at monitor, county, CBSA, and state levels. Requires a registered email and API key. API documentation: https://aqs.epa.gov/aqsweb/documents/data_api.html",
+        "credential_required": true,
+        "required_credential_fields": [
+          "email",
+          "key"
+        ],
+        "registration_url": "https://aqs.epa.gov/data/api/signup?email={your_email}"
+      },
+      {
+        "source_id": "ESRI_world_imagery",
+        "name": "ESRI World Imagery",
+        "description": "ESRI World Imagery is a web map service that provides satellite image tiles. It can be used to download tiles and mosaic them into a larger image. No API key is required. REST service: https://tiledbasemaps.arcgis.com/arcgis/rest/services/World_Imagery/MapServer",
+        "credential_required": false
+      },
+      {
+        "source_id": "OpenStreetMap",
+        "name": "OpenStreetMap",
+        "description": "OpenStreetMap provides administrative boundaries, street networks, and points of interest from community-contributed map data. No API key is required. Data is typically queried through the Overpass API: https://overpass-api.de/",
+        "credential_required": false
+      },
+      {
+        "source_id": "OpenTopography",
+        "name": "OpenTopography",
+        "description": "OpenTopography provides global digital elevation model data through an API, with resolutions ranging from about 15m to 1000m. Supported DEM sources include SRTMGL3, SRTMGL1, SRTMGL1_E, AW3D30, SRTM15Plus, NASADEM, COP30, EU_DTM, GEDI_L3, GEBCOIceTopo, and GEBCOSubIceTopo. Requires a free API key. API endpoint: https://portal.opentopography.org/API/globaldem",
+        "credential_required": true,
+        "required_credential_fields": [
+          "key"
+        ],
+        "registration_url": "https://portal.opentopography.org/myopentopo"
+      },
+      {
+        "source_id": "OpenWeather",
+        "name": "OpenWeather",
+        "description": "OpenWeather provides historical, current, and forecast weather data. Historical data can go back about one month. API limits include hourly forecast up to 4 days, daily forecast up to 16 days, and 3-hour forecast up to 5 days. Requires an API key. API documentation: https://openweathermap.org/api",
+        "credential_required": true,
+        "required_credential_fields": [
+          "key"
+        ],
+        "registration_url": "https://home.openweathermap.org/users/sign_up"
+      },
+      {
+        "source_id": "USDA_ERS_Geospatial",
+        "name": "USDA ERS Geospatial",
+        "description": "USDA ERS provides county-level and Census-tract-level geospatial data for the United States through ArcGIS REST services, covering food access, food environment, rural classifications, income, jobs, people, veterans, and SNAP participation. Data spans multiple releases including 2010, 2015, and 2019 food access data and the 2023 rural atlas release. No API key is required. REST services root: https://gisportal.ers.usda.gov/server/rest/services/",
+        "credential_required": false
+      },
+      {
+        "source_id": "USGS_Earthquake",
+        "name": "USGS Earthquake",
+        "description": "USGS Earthquake is an implementation of the FDSN Event Web Service Specification and supports custom earthquake searches using a variety of parameters. No API key is required. API endpoint: https://earthquake.usgs.gov/fdsnws/event/1/",
+        "credential_required": false
+      },
+      {
+        "source_id": "US_Census_boundary",
+        "name": "US Census Bureau Boundary",
+        "description": "US Census Bureau boundary services provide United States administrative boundaries including nation, state, county, tract, block group, and metropolitan statistical area boundaries. No API key is required. TIGERweb REST services: https://tigerweb.geo.census.gov/arcgis/rest/services",
+        "credential_required": false
+      },
+      {
+        "source_id": "US_Census_demography",
+        "name": "US Census Bureau Demography",
+        "description": "US Census Bureau demography APIs provide demographic and socioeconomic data such as population, gender, income, education, and race. An API key is required for more than 500 queries per IP address per day. Available APIs: https://www.census.gov/data/developers/data-sets.html",
+        "credential_required": true,
+        "required_credential_fields": [
+          "key"
+        ],
+        "registration_url": "https://api.census.gov/data/key_signup.html"
+      }
+    ],
+    "data_source_credentials": {
+      "description": "Some supported data sources require runtime credentials. Provide source-specific credentials in credentials.source_credentials. Do not put credentials in capability documents, URLs, handbooks, or committed files.",
+      "parameter": "credentials.source_credentials",
+      "format": {
+        "description": "Object keyed by data source ID. Field names are expanded into handbook placeholders using the pattern {source_id}_{field}.",
+        "example": {
+          "EPA_AQS": {
+            "email": "you@example.com",
+            "key": "YOUR_EPA_AQS_KEY"
+          },
+          "OpenWeather": {
+            "key": "YOUR_OPENWEATHER_KEY"
+          }
+        }
+      }
+    }
+  }
+}

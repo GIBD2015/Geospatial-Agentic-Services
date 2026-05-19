@@ -1,0 +1,214 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://www.geospatial-agentic-services.online/schemas/task_response.schema.json",
+  "title": "GAS Task Response",
+  "type": "object",
+  "required": [
+    "response",
+    "task",
+    "agent",
+    "outputs",
+    "execution",
+    "provenance",
+    "reproducibility",
+    "diagnostics"
+  ],
+  "properties": {
+    "response": {
+      "type": "object",
+      "required": ["type", "schema_version", "created_at"],
+      "properties": {
+        "type": {"type": "string", "enum": ["task_result"]},
+        "schema_version": {"type": "string"},
+        "created_at": {"type": "string"},
+        "completed_at": {"type": ["string", "null"]}
+      },
+      "additionalProperties": true
+    },
+    "task": {
+      "type": "object",
+      "required": ["id", "status", "terminal", "user_request"],
+      "properties": {
+        "id": {"type": "string"},
+        "status": {
+          "type": "string",
+          "enum": [
+            "accepted",
+            "running",
+            "successful",
+            "failed",
+            "canceled",
+            "rejected"
+          ]
+        },
+        "terminal": {"type": "boolean"},
+        "user_request": {"type": "string"},
+        "requested_skill": {"type": ["string", "null"]},
+        "artifact_delivery": {"type": "string"}
+      },
+      "additionalProperties": true
+    },
+    "agent": {
+      "type": "object",
+      "required": ["id", "name", "version", "model"],
+      "properties": {
+        "id": {"type": "string"},
+        "name": {"type": ["string", "null"]},
+        "version": {"type": ["string", "null"]},
+        "model": {"type": ["string", "null"]}
+      },
+      "additionalProperties": true
+    },
+    "outputs": {
+      "type": "object",
+      "required": ["summary", "artifacts", "data_summary"],
+      "properties": {
+        "summary": {"type": "string"},
+        "artifacts": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["name", "type", "format", "mime_type", "size_bytes"],
+            "properties": {
+              "name": {"type": "string"},
+              "type": {"type": ["string", "null"]},
+              "format": {"type": ["string", "null"]},
+              "mime_type": {"type": ["string", "null"]},
+              "size_bytes": {"type": ["number", "null"]},
+              "url": {"type": ["string", "null"]},
+              "encoding": {"type": ["string", "null"]},
+              "data": {"type": ["string", "null"]},
+              "spatial_metadata": {
+                "type": "object",
+                "required": ["type", "crs", "bbox", "geometry_type", "feature_count", "dimensions", "schema", "raster"],
+                "properties": {
+                  "type": {"type": ["string", "null"]},
+                  "crs": {"type": ["string", "null"]},
+                  "bbox": {
+                    "type": ["array", "null"],
+                    "items": {"type": "number"}
+                  },
+                  "geometry_type": {
+                    "type": ["string", "array", "null"],
+                    "items": {"type": "string"}
+                  },
+                  "feature_count": {"type": ["number", "null"]},
+                  "dimensions": {
+                    "type": ["array", "null"],
+                    "items": {"type": "number"}
+                  },
+                  "schema": {"type": ["object", "null"]},
+                  "raster": {"type": ["object", "null"]}
+                },
+                "additionalProperties": true
+              },
+              "validation": {
+                "type": "object",
+                "required": ["status", "checks"],
+                "properties": {
+                  "status": {"type": "string"},
+                  "checks": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "required": ["name", "status", "message"],
+                      "properties": {
+                        "name": {"type": "string"},
+                        "status": {"type": "string"},
+                        "message": {"type": "string"}
+                      },
+                      "additionalProperties": true
+                    }
+                  }
+                },
+                "additionalProperties": true
+              }
+            },
+            "additionalProperties": true
+          }
+        },
+        "data_summary": {"type": "object"}
+      },
+      "additionalProperties": true
+    },
+    "execution": {
+      "type": "object",
+      "required": ["status", "inputs", "code", "runtime"],
+      "properties": {
+        "status": {"type": "string"},
+        "duration_seconds": {"type": ["number", "string", "null"]},
+        "inputs": {"type": "object"},
+        "code": {"type": "object"},
+        "runtime": {"type": "object"}
+      },
+      "additionalProperties": true
+    },
+    "provenance": {
+      "type": "object",
+      "required": ["llm_calls", "tool_calls", "artifacts_created", "token_usage"],
+      "properties": {
+        "llm_calls": {"type": ["number", "null"]},
+        "tool_calls": {"type": ["number", "null"]},
+        "artifacts_created": {"type": ["number", "null"]},
+        "token_usage": {"type": "object"},
+        "lineage": {"type": "array"}
+      },
+      "additionalProperties": true
+    },
+    "reproducibility": {
+      "type": "object",
+      "required": [
+        "code_available",
+        "environment_available",
+        "parameters_available",
+        "input_artifacts",
+        "output_artifacts",
+        "parameters",
+        "stochasticity",
+        "notes"
+      ],
+      "properties": {
+        "code_available": {"type": "boolean"},
+        "environment_available": {"type": "boolean"},
+        "parameters_available": {"type": "boolean"},
+        "input_artifacts": {
+          "type": "array",
+          "items": {"type": "object"}
+        },
+        "output_artifacts": {
+          "type": "array",
+          "items": {"type": "object"}
+        },
+        "parameters": {"type": "object"},
+        "stochasticity": {
+          "type": "object",
+          "required": ["used", "controls"],
+          "properties": {
+            "used": {"type": ["string", "boolean"]},
+            "controls": {
+              "type": "array",
+              "items": {"type": "object"}
+            }
+          },
+          "additionalProperties": true
+        },
+        "notes": {"type": "array"}
+      },
+      "additionalProperties": true
+    },
+    "diagnostics": {
+      "type": "object",
+      "required": ["has_error", "error", "warnings", "validation", "assumptions", "limitations"],
+      "properties": {
+        "has_error": {"type": "boolean"},
+        "error": {"type": ["string", "null"]},
+        "warnings": {"type": "array"},
+        "validation": {"type": "object"},
+        "assumptions": {"type": "array"},
+        "limitations": {"type": "array"}
+      },
+      "additionalProperties": true
+    }
+  },
+  "additionalProperties": true
+}

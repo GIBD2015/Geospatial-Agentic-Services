@@ -1,0 +1,151 @@
+{
+  "profile": {
+    "agent_id": "mapping_agent",
+    "name": "Mapping Agent",
+    "description": "This agent creates visual outputs from prepared datasets, including maps and charts, and writes the result as a PNG image. It chooses an appropriate visualization style from the task and available data structure. It is most useful at the final presentation stage of a workflow when analysis results need to be communicated clearly.",
+    "version": "2.0.1",
+    "base_url": "https://www.geospatial-agentic-services.online/agents/mapping_agent",
+    "last_updated": "2026-04-28",
+    "provider": {
+      "name": "Geoinformation and Big Data Research Lab (GIBD)",
+      "website": "https://giscience.psu.edu",
+      "contacts": [
+        {
+          "name": "Ali Khosravi Kazazi",
+          "email": "abk6234@psu.edu"
+        }
+      ]
+    },
+    "default_model": "gpt-5.4"
+  },
+  "keywords": [
+    "map",
+    "chart",
+    "visualization",
+    "PNG",
+    "cartography",
+    "thematic mapping"
+  ],
+  "skills": [
+    {
+      "skill_id": "data_visualization_generation",
+      "name": "Data Visualization Generation",
+      "description": "Automatically decides between maps and charts based on schema (e.g., presence of geometry), determines z-order, generates Python code to plot the data, and returns the rendered artifact (PNG).",
+      "constraints": {
+        "spatial": "Dependent on the Coordinate Reference System (CRS) and geometries present in the provided input datasets.",
+        "temporal": null,
+        "other": [
+          "Code execution is strictly limited to a 60-second timeout.",
+          "Agent will attempt to fix code errors a maximum of 10 times (max_iterations) before falling back to a deterministic renderer.",
+          "Agent is strictly forbidden from downloading data from external sources during execution."
+        ]
+      }
+    }
+  ],
+  "execute_task": {
+    "operation_id": "execute_task",
+    "name": "ExecuteTask",
+    "description": "Submits a natural-language geospatial task to the agent. The task.mode field controls sync, async, or stream execution.",
+    "request_schema": "https://www.geospatial-agentic-services.online/schemas/execute_task_request.schema.json",
+    "response_schema": "https://www.geospatial-agentic-services.online/schemas/task_response.schema.json",
+    "modes": [
+      "sync",
+      "async",
+      "stream"
+    ],
+    "task": {
+      "instructions": {
+        "required": true,
+        "description": "Natural-language task instructions."
+      }
+    },
+    "inputs": {
+      "input_datasets": {
+        "required": true,
+        "description": "Optional array of input datasets. Each item may be an HTTP/HTTPS URL, a server-accessible path, or a base64-encoded file object with filename, data, and optional mime_type.",
+        "supported_item_types": [
+          "URL",
+          "server_path",
+          "encoded_file_object"
+        ]
+      }
+    },
+    "outputs": {
+      "artifact_delivery": {
+        "required": false,
+        "default": "URL",
+        "allowed_values": [
+          "URL",
+          "Encoded"
+        ],
+        "description": "How generated artifacts are delivered in the standard response: 'URL' (default) or 'Encoded'."
+      },
+      "primary_artifacts": [
+        {
+          "type": "static_map_or_chart",
+          "formats": [
+            "PNG"
+          ],
+          "required": true,
+          "description": "Static map, chart, or visualization image generated from input datasets."
+        }
+      ]
+    },
+    "parameters": {
+      "model": {
+        "required": false,
+        "default": "gpt-5.4",
+        "description": "Optional model override. If omitted, the agent uses its default model."
+      },
+      "requested_skill": {
+        "required": false,
+        "description": "Advanced optional skill-selection hint. Most clients should omit this."
+      }
+    },
+    "credentials": {
+      "required": true,
+      "one_of": [
+        "OPENAI_API_KEY",
+        "GIBD_API_KEY"
+      ],
+      "description": "Provide one model execution credential in the request credentials object."
+    }
+  },
+  "conformance": {
+    "gas_version": "1.0.0",
+    "schemas": {
+      "describe_agent": "https://www.geospatial-agentic-services.online/schemas/describe_agent.schema.json",
+      "task_response": "https://www.geospatial-agentic-services.online/schemas/task_response.schema.json",
+      "execute_task_request": "https://www.geospatial-agentic-services.online/schemas/execute_task_request.schema.json"
+    }
+  },
+  "provenance_and_reproducibility": {
+    "provenance": {
+      "supported": true,
+      "description": "Includes llm_calls, tool_calls, token usage (input_tokens, output_tokens, total_tokens), duration, and number_of_artifacts in the response provenance section."
+    },
+    "reproducibility": {
+      "supported": true,
+      "description": "Returns the exact Python script used for execution in the execution.code.script field, along with environment details (Python version, domain-specific libraries)."
+    },
+    "validation": {
+      "supported": false,
+      "description": "Agent checks code execution success but does not validate image quality or correctness."
+    }
+  },
+  "governance": {
+    "access_control": {
+      "description": "Allowed roles set to ['all'] via the extension profile. No role-based access control is enforced."
+    },
+    "operation_policy": {
+      "description": "Python code execution sandbox strictly times out after 60 seconds. Maximum 10 LLM iterations. Agent is forbidden from downloading external data during execution."
+    },
+    "review_policy": {
+      "description": "output_review_required is set to false. No human-in-the-loop validation is required."
+    },
+    "policy_notes": "If the agent is used, please cite the paper on the visualization agent."
+  },
+  "extensions": {
+    "description": "This agent uses matplotlib, geopandas, pandas, and mapclassify to generate visual outputs. It is designed for geospatial data visualization tasks and can handle various input formats to produce maps and charts. Supports classified (choropleth) and unclassified (uniform color) map styles, as well as bar and line charts."
+  }
+}

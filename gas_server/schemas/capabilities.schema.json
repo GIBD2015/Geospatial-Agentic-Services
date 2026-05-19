@@ -1,0 +1,112 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://www.geospatial-agentic-services.online/schemas/capabilities.schema.json",
+  "title": "GAS GetCapabilities Document",
+  "type": "object",
+  "required": [
+    "service",
+    "version",
+    "base_url",
+    "request",
+    "title",
+    "description",
+    "provider",
+    "operations",
+    "agents"
+  ],
+  "properties": {
+    "service": {
+      "type": "string",
+      "enum": ["GAS"]
+    },
+    "version": {
+      "type": "string"
+    },
+    "base_url": {
+      "type": "string"
+    },
+    "request": {
+      "type": "string",
+      "enum": ["GetCapabilities"]
+    },
+    "title": {
+      "type": "string"
+    },
+    "description": {
+      "type": "string"
+    },
+    "provider": {
+      "type": "object",
+      "required": ["name"],
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "website": {
+          "type": ["string", "null"]
+        },
+        "contact": {
+          "type": "object"
+        }
+      },
+      "additionalProperties": true
+    },
+    "operations": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": ["operation_id", "name", "method", "path", "url", "description"],
+        "properties": {
+          "operation_id": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "method": {
+            "type": "string",
+            "enum": ["GET", "POST", "PUT", "PATCH", "DELETE"]
+          },
+          "path": {
+            "type": "string"
+          },
+          "url": {
+            "type": "string"
+          },
+          "description": {
+            "type": "string"
+          },
+          "request_schema": {
+            "type": "string"
+          },
+          "response_schema": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": true
+      }
+    },
+    "agents": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": ["agent_id", "name", "DescribeAgent"],
+        "properties": {
+          "agent_id": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "DescribeAgent": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": true
+      }
+    }
+  },
+  "additionalProperties": true
+}

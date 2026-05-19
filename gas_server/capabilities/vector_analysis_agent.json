@@ -1,0 +1,156 @@
+{
+  "profile": {
+    "agent_id": "vector_analysis_agent",
+    "name": "Vector Analysis Agent",
+    "description": "This agent performs vector-based spatial analysis and transformation using deterministic GeoPandas workflows for common operations and model-backed code workflows for more complex requests. It supports operations such as clipping, joining, buffering, intersecting, distance analysis, filtering, and aggregation. It can return GeoPackage or GeoJSON for spatial outputs and CSV for tabular outputs derived from the analysis.",
+    "version": "2.1.0",
+    "base_url": "https://www.geospatial-agentic-services.online/agents/vector_analysis_agent",
+    "last_updated": "2026-04-28",
+    "provider": {
+      "name": "Geoinformation and Big Data Research Lab (GIBD)",
+      "website": "https://giscience.psu.edu",
+      "contacts": [
+        {
+          "name": "Ali Khosravi Kazazi",
+          "email": "abk6234@psu.edu"
+        }
+      ]
+    },
+    "default_model": "gpt-5.4"
+  },
+  "keywords": [
+    "vector analysis",
+    "buffer",
+    "overlay",
+    "spatial join",
+    "attribute join",
+    "GeoPackage",
+    "GeoJSON",
+    "CSV",
+    "GeoPandas"
+  ],
+  "skills": [
+    {
+      "skill_id": "code_driven_vector_spatial_analysis",
+      "name": "Code-Driven Vector Spatial Analysis",
+      "description": "Uses deterministic GeoPandas/Pandas workflows for common joins, buffers, clips, and intersections when the operation can be confidently inferred. For more complex requests, it iteratively writes and executes Python code in a sandboxed environment to load, inspect, and analyze vector datasets using GeoPandas, Pandas, and Shapely.",
+      "constraints": {
+        "spatial": "Dependent on the coordinate reference systems (CRS) of the input datasets. The agent is instructed to project data to an appropriate CRS for distance calculations.",
+        "temporal": null,
+        "other": [
+          "The autonomous reasoning and execution loop is capped at a maximum of 40 iterations.",
+          "Spatial results are saved as GeoPackage (.gpkg) by default unless GeoJSON is explicitly requested; tabular/attribute-only results are saved as CSV (.csv).",
+          "The geometry column must always be retained in spatial outputs."
+        ]
+      }
+    }
+  ],
+  "execute_task": {
+    "operation_id": "execute_task",
+    "name": "ExecuteTask",
+    "description": "Submits a natural-language geospatial task to the agent. The task.mode field controls sync, async, or stream execution.",
+    "request_schema": "https://www.geospatial-agentic-services.online/schemas/execute_task_request.schema.json",
+    "response_schema": "https://www.geospatial-agentic-services.online/schemas/task_response.schema.json",
+    "modes": [
+      "sync",
+      "async",
+      "stream"
+    ],
+    "task": {
+      "instructions": {
+        "required": true,
+        "description": "Natural-language task instructions."
+      }
+    },
+    "inputs": {
+      "input_datasets": {
+        "required": true,
+        "description": "Optional array of input datasets. Each item may be an HTTP/HTTPS URL, a server-accessible path, or a base64-encoded file object with filename, data, and optional mime_type.",
+        "supported_item_types": [
+          "URL",
+          "server_path",
+          "encoded_file_object"
+        ]
+      }
+    },
+    "outputs": {
+      "artifact_delivery": {
+        "required": false,
+        "default": "URL",
+        "allowed_values": [
+          "URL",
+          "Encoded"
+        ],
+        "description": "How generated artifacts are delivered in the standard response: 'URL' (default) or 'Encoded'."
+      },
+      "primary_artifacts": [
+        {
+          "type": "vector_or_table_analysis_result",
+          "formats": [
+            "GeoJSON",
+            "GeoPackage",
+            "CSV"
+          ],
+          "required": true,
+          "description": "Spatial vector result or tabular result produced by vector analysis."
+        }
+      ]
+    },
+    "parameters": {
+      "model": {
+        "required": false,
+        "default": "gpt-5.4",
+        "description": "Optional model override. If omitted, the agent uses its default model."
+      },
+      "requested_skill": {
+        "required": false,
+        "description": "Advanced optional skill-selection hint. Most clients should omit this."
+      }
+    },
+    "credentials": {
+      "required": true,
+      "one_of": [
+        "OPENAI_API_KEY",
+        "GIBD_API_KEY"
+      ],
+      "description": "Provide one model execution credential in the request credentials object."
+    }
+  },
+  "conformance": {
+    "gas_version": "1.0.0",
+    "schemas": {
+      "describe_agent": "https://www.geospatial-agentic-services.online/schemas/describe_agent.schema.json",
+      "task_response": "https://www.geospatial-agentic-services.online/schemas/task_response.schema.json",
+      "execute_task_request": "https://www.geospatial-agentic-services.online/schemas/execute_task_request.schema.json"
+    }
+  },
+  "provenance_and_reproducibility": {
+    "provenance": {
+      "supported": true,
+      "description": "Includes llm_calls, tool_calls, token usage (input_tokens, output_tokens), number_of_artifacts, and script execution count in the response provenance section."
+    },
+    "reproducibility": {
+      "supported": true,
+      "description": "Returns the consolidated Python script used for execution in the script field. The script history is cleaned to remove redundant imports and file reads."
+    },
+    "validation": {
+      "supported": false,
+      "description": "Deterministic common-operation workflows validate join matches and non-empty spatial results before saving. More complex model-backed workflows still require downstream review for domain correctness."
+    }
+  },
+  "governance": {
+    "access_control": {
+      "description": "Allowed roles set to ['all'] via the extension profile. No role-based access control is enforced."
+    },
+    "operation_policy": {
+      "description": "Common vector operations use deterministic GeoPandas/Pandas workflows first. Complex fallback workflows use Python code execution in a sandboxed environment with a maximum of 40 iterations."
+    },
+    "review_policy": {
+      "description": "output_review_required is set to false. No human-in-the-loop validation is required."
+    },
+    "policy_notes": "If the agent is used, please cite the relevant research on geospatial AI agents."
+  },
+  "extensions": {
+    "description": "This agent uses GeoPandas, Pandas, Shapely, and NumPy for vector spatial analysis. Deterministic fast paths support attribute joins, spatial joins, buffering, clipping, and intersections. The model-backed fallback maintains a persistent registry across code execution steps for intermediate variable storage and reuse."
+  }
+}

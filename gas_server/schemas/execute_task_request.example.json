@@ -1,0 +1,31 @@
+{
+  "task": {
+    "instructions": "Create an interactive web map from these county boundaries and hospital points.",
+    "mode": "stream"
+  },
+  "inputs": {
+    "input_datasets": [
+      "https://example.com/pa_counties.geojson",
+      {
+        "filename": "pa_hospitals.geojson",
+        "encoding": "base64",
+        "mime_type": "application/geo+json",
+        "data": "BASE64_ENCODED_FILE_CONTENT"
+      }
+    ]
+  },
+  "outputs": {
+    "artifact_delivery": "URL"
+  },
+  "parameters": {
+    "model": "gpt-5.2"
+  },
+  "credentials": {
+    "OPENAI_API_KEY": "YOUR_OPENAI_API_KEY"
+  },
+  "metadata": {
+    "client_id": "jupyter-notebook",
+    "request_id": "map-demo-001",
+    "project": "Pennsylvania hospital accessibility study"
+  }
+}

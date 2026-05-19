@@ -1,0 +1,165 @@
+{
+  "profile": {
+    "agent_id": "geospatial_data_inspection_agent",
+    "name": "Geospatial Data Inspection Agent",
+    "description": "This agent inspects vector, raster, and tabular geospatial datasets for data quality, spatial metadata completeness, validation issues, and workflow readiness. It combines deterministic dataset inspection with LLM-assisted interpretation of the user's workflow question, then returns a standard GAS task response with TXT and HTML inspection report artifacts.",
+    "version": "1.0.0",
+    "base_url": "https://www.geospatial-agentic-services.online/agents/geospatial_data_inspection_agent",
+    "last_updated": "2026-05-17",
+    "provider": {
+      "name": "Geoinformation and Big Data Research Lab (GIBD)",
+      "website": "https://giscience.psu.edu",
+      "contacts": [
+        {
+          "name": "Zhenlong Li",
+          "email": "zhenlong@psu.edu"
+        }
+      ]
+    },
+    "default_model": "gpt-5.2"
+  },
+  "keywords": [
+    "data quality",
+    "validation",
+    "metadata",
+    "CRS",
+    "geometry validity",
+    "workflow readiness"
+  ],
+  "skills": [
+    {
+      "skill_id": "geospatial_data_inspection",
+      "name": "Geospatial Data Inspection",
+      "description": "Inspects input datasets for CRS availability, vector geometry validity, empty or null geometries, duplicate records, missing values, raster dimensions and NoData metadata, coordinate columns, join key candidates, and suitability for mapping, spatial joins, and distance analysis. The deterministic inspection results are synthesized with an LLM when model credentials are available.",
+      "constraints": {
+        "spatial": "Supports common vector formats readable by GeoPandas, raster formats readable by Rasterio, and tabular CSV/TSV inputs readable by Pandas.",
+        "temporal": null,
+        "other": [
+          "The agent performs automated inspection and quality checks and advisory workflow-readiness assessment.",
+          "When an LLM client is configured, the agent interprets inspected facts against the user's stated workflow question.",
+          "Topology checks are lightweight and do not replace a domain-specific QA/QC review.",
+          "The primary artifacts are a plain-text report and a formatted HTML report."
+        ]
+      }
+    },
+    {
+      "skill_id": "inspection_report_generation",
+      "name": "Inspection Report Generation",
+      "description": "Generates a concise machine-readable assessment inside the standard GAS response and returns human-readable TXT and HTML inspection report artifacts.",
+      "constraints": {
+        "spatial": null,
+        "temporal": null,
+        "other": [
+          "Reports include dataset metadata, validation checks, LLM-assisted workflow synthesis when available, suitability guidance, assumptions, limitations, and recommended next steps."
+        ]
+      }
+    }
+  ],
+  "execute_task": {
+    "operation_id": "execute_task",
+    "name": "ExecuteTask",
+    "description": "Submits a natural-language geospatial task to the agent. The task.mode field controls sync, async, or stream execution.",
+    "request_schema": "https://www.geospatial-agentic-services.online/schemas/execute_task_request.schema.json",
+    "response_schema": "https://www.geospatial-agentic-services.online/schemas/task_response.schema.json",
+    "modes": [
+      "sync",
+      "async",
+      "stream"
+    ],
+    "task": {
+      "instructions": {
+        "required": true,
+        "description": "Natural-language task instructions."
+      }
+    },
+    "inputs": {
+      "input_datasets": {
+        "required": true,
+        "description": "Optional array of input datasets. Each item may be an HTTP/HTTPS URL, a server-accessible path, or a base64-encoded file object with filename, data, and optional mime_type.",
+        "supported_item_types": [
+          "URL",
+          "server_path",
+          "encoded_file_object"
+        ]
+      }
+    },
+    "outputs": {
+      "artifact_delivery": {
+        "required": false,
+        "default": "URL",
+        "allowed_values": [
+          "URL",
+          "Encoded"
+        ],
+        "description": "How generated artifacts are delivered in the standard response: 'URL' (default) or 'Encoded'."
+      },
+      "primary_artifacts": [
+        {
+          "type": "inspection_report",
+          "formats": [
+            "TXT",
+            "HTML"
+          ],
+          "required": true,
+          "description": "Readable data inspection report summarizing CRS, geometry, missing values, duplicates, and workflow readiness."
+        }
+      ]
+    },
+    "parameters": {
+      "model": {
+        "required": false,
+        "default": "gpt-5.2",
+        "description": "Optional model override. If omitted, the agent uses its default model."
+      },
+      "requested_skill": {
+        "required": false,
+        "description": "Advanced optional skill-selection hint. Most clients should omit this."
+      }
+    },
+    "credentials": {
+      "required": true,
+      "one_of": [
+        "OPENAI_API_KEY",
+        "GIBD_API_KEY"
+      ],
+      "description": "Provide one model execution credential in the request credentials object."
+    }
+  },
+  "conformance": {
+    "gas_version": "1.0.0",
+    "schemas": {
+      "describe_agent": "https://www.geospatial-agentic-services.online/schemas/describe_agent.schema.json",
+      "task_response": "https://www.geospatial-agentic-services.online/schemas/task_response.schema.json",
+      "execute_task_request": "https://www.geospatial-agentic-services.online/schemas/execute_task_request.schema.json"
+    }
+  },
+  "provenance_and_reproducibility": {
+    "provenance": {
+      "supported": true,
+      "description": "Includes inspected dataset count, quality checks, generated artifacts, runtime metadata, and lineage in the standard task response."
+    },
+    "reproducibility": {
+      "supported": true,
+      "description": "Uses deterministic library-based inspection plus optional LLM-assisted synthesis. Reports input and output artifacts, runtime environment, parameters, token usage when available, and stochasticity controls."
+    },
+    "validation": {
+      "supported": true,
+      "description": "Returns dataset-level checks for readability, CRS, geometry validity, duplicate records, missing values, raster metadata, coordinate readiness, and workflow suitability."
+    }
+  },
+  "governance": {
+    "access_control": {
+      "description": "Allowed roles set to ['all'] via the extension profile. No role-based access control is enforced."
+    },
+    "operation_policy": {
+      "description": "The agent reads supplied datasets and generates quality reports. It does not alter source datasets."
+    },
+    "review_policy": {
+      "description": "automated inspection and quality checks are advisory. Human review is recommended before using datasets for high-impact decisions."
+    },
+    "policy_notes": "Data quality reports may reveal schema, attribute names, and basic spatial metadata from supplied datasets."
+  },
+  "extensions": {
+    "description": "This agent adds GAS-oriented data inspection and conformance-style checking for geospatial service workflows, combining deterministic validation facts with workflow-specific interpretation and producing standard task responses plus TXT and HTML inspection report artifacts."
+  }
+}

@@ -1,0 +1,123 @@
+{
+  "service": "GAS",
+  "version": "1.0.0",
+  "base_url": "https://www.geospatial-agentic-services.online",
+  "request": "GetCapabilities",
+  "title": "Geospatial Agentic Services from GIBD Lab at Penn State",
+  "description": "Demonstration API for GAS agents in an OGC Web-Service/API style with JSON payloads.",
+  "provider": {
+    "name": "Geoinformation and Big Data Research Lab (GIBD)",
+    "website": "https://giscience.psu.edu",
+    "contact": {
+      "name": "Zhenlong Li",
+      "email": "zhenlong@psu.edu"
+    }
+  },
+  "operations": [
+    {
+      "operation_id": "get_capabilities",
+      "name": "GetCapabilities",
+      "method": "GET",
+      "path": "/?SERVICE=GAS&VERSION=1.0.0&REQUEST=GetCapabilities",
+      "url": "https://www.geospatial-agentic-services.online/?SERVICE=GAS&VERSION=1.0.0&REQUEST=GetCapabilities",
+      "description": "Returns the service-level GAS capabilities document, including provider metadata, shared operations, and published agents."
+    },
+    {
+      "operation_id": "describe_agent",
+      "name": "DescribeAgent",
+      "method": "GET",
+      "path": "/?SERVICE=GAS&VERSION=1.0.0&REQUEST=DescribeAgent&agent_id={agent_id}",
+      "url": "https://www.geospatial-agentic-services.online/?SERVICE=GAS&VERSION=1.0.0&REQUEST=DescribeAgent&agent_id={agent_id}",
+      "description": "Returns the capability document for a specific published agent."
+    },
+    {
+      "operation_id": "execute_task",
+      "name": "ExecuteTask",
+      "method": "POST",
+      "path": "/agents/{agent_id}/tasks",
+      "url": "https://www.geospatial-agentic-services.online/agents/{agent_id}/tasks",
+      "description": "Executes an agent task using the canonical GAS ExecuteTask request body. Supports sync, async, and stream modes.",
+      "request_schema": "execute_task_request.schema.json",
+      "response_schema": "agent_response.schema.json"
+    },
+    {
+      "operation_id": "get_task_status",
+      "name": "GetTaskStatus",
+      "method": "GET",
+      "path": "/agents/{agent_id}/tasks/{task_id}/status",
+      "url": "https://www.geospatial-agentic-services.online/agents/{agent_id}/tasks/{task_id}/status",
+      "description": "Returns the current status for an accepted task."
+    },
+    {
+      "operation_id": "get_task_result",
+      "name": "GetTaskResult",
+      "method": "GET",
+      "path": "/agents/{agent_id}/tasks/{task_id}/result",
+      "url": "https://www.geospatial-agentic-services.online/agents/{agent_id}/tasks/{task_id}/result",
+      "description": "Returns the final standard GAS task response for a completed, failed, or canceled task."
+    },
+    {
+      "operation_id": "cancel_task",
+      "name": "CancelTask",
+      "method": "POST",
+      "path": "/agents/{agent_id}/tasks/{task_id}/cancel",
+      "url": "https://www.geospatial-agentic-services.online/agents/{agent_id}/tasks/{task_id}/cancel",
+      "description": "Requests cancellation for a running or queued task when supported by the server runtime."
+    },
+    {
+      "operation_id": "get_agent_status",
+      "name": "GetAgentStatus",
+      "method": "GET",
+      "path": "/agents/{agent_id}/status",
+      "url": "https://www.geospatial-agentic-services.online/agents/{agent_id}/status",
+      "description": "Returns basic status and health information for a published agent service."
+    }
+  ],
+  "agents": [
+    {
+      "agent_id": "geospatial_data_retrieval_agent",
+      "name": "Geospatial Data Retrieval Agent",
+      "DescribeAgent": "https://www.geospatial-agentic-services.online/?SERVICE=GAS&VERSION=1.0.0&REQUEST=DescribeAgent&agent_id=geospatial_data_retrieval_agent"
+    },
+    {
+      "agent_id": "geospatial_data_inspection_agent",
+      "name": "Geospatial Data Inspection Agent",
+      "DescribeAgent": "https://www.geospatial-agentic-services.online/?SERVICE=GAS&VERSION=1.0.0&REQUEST=DescribeAgent&agent_id=geospatial_data_inspection_agent"
+    },
+    {
+      "agent_id": "web_mapping_app_agent",
+      "name": "Web Mapping App Agent",
+      "DescribeAgent": "https://www.geospatial-agentic-services.online/?SERVICE=GAS&VERSION=1.0.0&REQUEST=DescribeAgent&agent_id=web_mapping_app_agent"
+    },
+    {
+      "agent_id": "map_projection_agent",
+      "name": "Map Projection Agent",
+      "DescribeAgent": "https://www.geospatial-agentic-services.online/?SERVICE=GAS&VERSION=1.0.0&REQUEST=DescribeAgent&agent_id=map_projection_agent"
+    },
+    {
+      "agent_id": "mapping_agent",
+      "name": "Mapping Agent",
+      "DescribeAgent": "https://www.geospatial-agentic-services.online/?SERVICE=GAS&VERSION=1.0.0&REQUEST=DescribeAgent&agent_id=mapping_agent"
+    },
+    {
+      "agent_id": "pasda_agent",
+      "name": "PASDA Discovery Agent",
+      "DescribeAgent": "https://www.geospatial-agentic-services.online/?SERVICE=GAS&VERSION=1.0.0&REQUEST=DescribeAgent&agent_id=pasda_agent"
+    },
+    {
+      "agent_id": "raster_agent",
+      "name": "Raster Agent",
+      "DescribeAgent": "https://www.geospatial-agentic-services.online/?SERVICE=GAS&VERSION=1.0.0&REQUEST=DescribeAgent&agent_id=raster_agent"
+    },
+    {
+      "agent_id": "spatial_statistics_agent",
+      "name": "Spatial Statistics Agent",
+      "DescribeAgent": "https://www.geospatial-agentic-services.online/?SERVICE=GAS&VERSION=1.0.0&REQUEST=DescribeAgent&agent_id=spatial_statistics_agent"
+    },
+    {
+      "agent_id": "vector_analysis_agent",
+      "name": "Vector Analysis Agent",
+      "DescribeAgent": "https://www.geospatial-agentic-services.online/?SERVICE=GAS&VERSION=1.0.0&REQUEST=DescribeAgent&agent_id=vector_analysis_agent"
+    }
+  ]
+}

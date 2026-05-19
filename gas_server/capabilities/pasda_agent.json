@@ -1,0 +1,154 @@
+{
+  "profile": {
+    "agent_id": "pasda_agent",
+    "name": "PASDA Discovery Agent",
+    "description": "This agent serves as an expert gateway to the Pennsylvania Spatial Data Access (PASDA) repository. It translates broad user requests into precise PASDA queries, using technical handbooks for PASDA metadata and direct download pages. It uses a two-step process: first identifying and describing the relevant datasets, then retrieving and packaging the actual data into GeoPackage by default or GeoJSON when explicitly requested.",
+    "version": "1.0.0",
+    "base_url": "https://www.geospatial-agentic-services.online/agents/pasda_agent",
+    "last_updated": "2026-04-28",
+    "provider": {
+      "name": "Geoinformation and Big Data Research Lab (GIBD)",
+      "website": "https://giscience.psu.edu",
+      "contacts": [
+        {
+          "name": "Ruixiang Liu",
+          "email": "ruixiangliu@psu.edu"
+        }
+      ]
+    },
+    "default_model": "gpt-4o-2024-05-13"
+  },
+  "keywords": [
+    "PASDA",
+    "Pennsylvania",
+    "data discovery",
+    "data download",
+    "GeoJSON",
+    "GeoPackage"
+  ],
+  "skills": [
+    {
+      "skill_id": "pasda_data_retrieval",
+      "name": "PASDA Data Retrieval",
+      "description": "Translates a broad user query about Pennsylvania geospatial data into a structured PASDA search. It consults the PASDA metadata and download handbooks to identify relevant datasets, retrieves their metadata, and then generates code to download the actual data using direct download links or FTP.",
+      "constraints": {
+        "spatial": "Geographic scope is strictly limited to the Commonwealth of Pennsylvania.",
+        "temporal": null,
+        "other": [
+          "Requires a two-step workflow: Metadata Query (identify and describe) followed by Data Retrieval (download and package).",
+          "Code execution will retry debugging up to 10 times upon failure.",
+          "Final vector output is saved as GeoPackage (.gpkg) by default unless GeoJSON is explicitly requested.",
+          "Source data may be in Shapefile, GDB, or GeoTIFF formats which are converted during packaging."
+        ]
+      }
+    }
+  ],
+  "execute_task": {
+    "operation_id": "execute_task",
+    "name": "ExecuteTask",
+    "description": "Submits a natural-language geospatial task to the agent. The task.mode field controls sync, async, or stream execution.",
+    "request_schema": "https://www.geospatial-agentic-services.online/schemas/execute_task_request.schema.json",
+    "response_schema": "https://www.geospatial-agentic-services.online/schemas/task_response.schema.json",
+    "modes": [
+      "sync",
+      "async",
+      "stream"
+    ],
+    "task": {
+      "instructions": {
+        "required": true,
+        "description": "Natural-language task instructions."
+      }
+    },
+    "inputs": {
+      "input_datasets": {
+        "required": false,
+        "description": "Optional array of input datasets. Each item may be an HTTP/HTTPS URL, a server-accessible path, or a base64-encoded file object with filename, data, and optional mime_type.",
+        "supported_item_types": [
+          "URL",
+          "server_path",
+          "encoded_file_object"
+        ]
+      }
+    },
+    "outputs": {
+      "artifact_delivery": {
+        "required": false,
+        "default": "URL",
+        "allowed_values": [
+          "URL",
+          "Encoded"
+        ],
+        "description": "How generated artifacts are delivered in the standard response: 'URL' (default) or 'Encoded'."
+      },
+      "primary_artifacts": [
+        {
+          "type": "dataset",
+          "formats": [
+            "GeoPackage",
+            "GeoJSON",
+            "source-specific PASDA files"
+          ],
+          "required": true,
+          "description": "Dataset discovered or downloaded from PASDA based on the user request."
+        }
+      ]
+    },
+    "parameters": {
+      "model": {
+        "required": false,
+        "default": "gpt-4o-2024-05-13",
+        "description": "Optional model override. If omitted, the agent uses its default model."
+      },
+      "requested_skill": {
+        "required": false,
+        "description": "Advanced optional skill-selection hint. Most clients should omit this."
+      }
+    },
+    "credentials": {
+      "required": true,
+      "one_of": [
+        "OPENAI_API_KEY",
+        "GIBD_API_KEY"
+      ],
+      "description": "Provide one model execution credential in the request credentials object."
+    }
+  },
+  "conformance": {
+    "gas_version": "1.0.0",
+    "schemas": {
+      "describe_agent": "https://www.geospatial-agentic-services.online/schemas/describe_agent.schema.json",
+      "task_response": "https://www.geospatial-agentic-services.online/schemas/task_response.schema.json",
+      "execute_task_request": "https://www.geospatial-agentic-services.online/schemas/execute_task_request.schema.json"
+    }
+  },
+  "provenance_and_reproducibility": {
+    "provenance": {
+      "supported": true,
+      "description": "Includes llm_calls, tool_calls, token usage (input_tokens, output_tokens), duration, and number of artifacts in the response provenance section."
+    },
+    "reproducibility": {
+      "supported": true,
+      "description": "Returns the exact Python script used for download and packaging execution in the execution.code.script field, along with environment details and selected data source."
+    },
+    "validation": {
+      "supported": false,
+      "description": "Agent checks code execution success but does not validate the spatial accuracy or completeness of PASDA data."
+    }
+  },
+  "governance": {
+    "access_control": {
+      "description": "Allowed roles set to ['all'] via the extension profile. No role-based access control is enforced."
+    },
+    "operation_policy": {
+      "description": "PASDA discovery uses cached tool calls and direct download helpers when possible. Output is normalized to GeoPackage by default or GeoJSON when explicitly requested. Geographic scope is limited to Pennsylvania."
+    },
+    "review_policy": {
+      "description": "output_review_required is set to false. No human-in-the-loop validation is required."
+    },
+    "policy_notes": "If the agent is used, please cite the relevant research on geospatial AI agents."
+  },
+  "extensions": {
+    "description": "This agent is specifically tailored for the Pennsylvania Spatial Data Access (PASDA) repository. It uses PASDA technical handbooks for metadata and direct download page URLs. Source data may be in Shapefile, GDB, or GeoTIFF formats and is converted to GeoPackage by default or GeoJSON during packaging. Supports FTP and direct HTTP download."
+  }
+}

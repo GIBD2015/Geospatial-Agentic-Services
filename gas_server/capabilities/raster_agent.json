@@ -1,0 +1,153 @@
+{
+  "profile": {
+    "agent_id": "raster_agent",
+    "name": "Raster Agent",
+    "description": "This agent performs raster-focused and mixed raster-vector spatial analysis through code-driven execution. It supports tasks such as clipping, raster calculations, terrain-style operations, rasterization, and combined raster-vector workflows. It returns outputs in formats appropriate to the result, such as GeoTIFF for raster products or GeoPackage/GeoJSON for vector products.",
+    "version": "3.0.0",
+    "base_url": "https://www.geospatial-agentic-services.online/agents/raster_agent",
+    "last_updated": "2026-04-28",
+    "provider": {
+      "name": "Geoinformation and Big Data Research Lab (GIBD)",
+      "website": "https://giscience.psu.edu",
+      "contacts": [
+        {
+          "name": "Ruixiang Liu",
+          "email": "ruixiangliu@psu.edu"
+        }
+      ]
+    },
+    "default_model": "gpt-4o-2024-05-13"
+  },
+  "keywords": [
+    "raster",
+    "GeoTIFF",
+    "raster analysis",
+    "raster-vector analysis",
+    "rasterio"
+  ],
+  "skills": [
+    {
+      "skill_id": "code_driven_spatial_analysis",
+      "name": "Code-Driven Spatial Analysis",
+      "description": "Writes and executes Python code iteratively to load, inspect, and analyze raster and vector datasets. Uses a persistent runtime memory (registry) to store and reuse intermediate variables across steps, supporting complex multi-step workflows using rasterio, rioxarray, geopandas, and numpy.",
+      "constraints": {
+        "spatial": "Dependent on the coordinate reference systems (CRS) and extents of the input datasets.",
+        "temporal": null,
+        "other": [
+          "Maximum autonomous iteration limit is 40 turns.",
+          "Final raster outputs are saved as GeoTIFF (.tif) and vector outputs as GeoPackage (.gpkg) by default unless GeoJSON is explicitly requested.",
+          "Raw DataFrames (tabular data without geometry) cannot be saved as final spatial artifacts without conversion."
+        ]
+      }
+    }
+  ],
+  "execute_task": {
+    "operation_id": "execute_task",
+    "name": "ExecuteTask",
+    "description": "Submits a natural-language geospatial task to the agent. The task.mode field controls sync, async, or stream execution.",
+    "request_schema": "https://www.geospatial-agentic-services.online/schemas/execute_task_request.schema.json",
+    "response_schema": "https://www.geospatial-agentic-services.online/schemas/task_response.schema.json",
+    "modes": [
+      "sync",
+      "async",
+      "stream"
+    ],
+    "task": {
+      "instructions": {
+        "required": true,
+        "description": "Natural-language task instructions."
+      }
+    },
+    "inputs": {
+      "input_datasets": {
+        "required": true,
+        "description": "Optional array of input datasets. Each item may be an HTTP/HTTPS URL, a server-accessible path, or a base64-encoded file object with filename, data, and optional mime_type.",
+        "supported_item_types": [
+          "URL",
+          "server_path",
+          "encoded_file_object"
+        ]
+      }
+    },
+    "outputs": {
+      "artifact_delivery": {
+        "required": false,
+        "default": "URL",
+        "allowed_values": [
+          "URL",
+          "Encoded"
+        ],
+        "description": "How generated artifacts are delivered in the standard response: 'URL' (default) or 'Encoded'."
+      },
+      "primary_artifacts": [
+        {
+          "type": "raster_or_vector_analysis_result",
+          "formats": [
+            "GeoTIFF",
+            "GeoPackage",
+            "GeoJSON",
+            "CSV"
+          ],
+          "required": true,
+          "description": "Raster, vector, or tabular artifact produced by raster or mixed spatial analysis."
+        }
+      ]
+    },
+    "parameters": {
+      "model": {
+        "required": false,
+        "default": "gpt-4o-2024-05-13",
+        "description": "Optional model override. If omitted, the agent uses its default model."
+      },
+      "requested_skill": {
+        "required": false,
+        "description": "Advanced optional skill-selection hint. Most clients should omit this."
+      }
+    },
+    "credentials": {
+      "required": true,
+      "one_of": [
+        "OPENAI_API_KEY",
+        "GIBD_API_KEY"
+      ],
+      "description": "Provide one model execution credential in the request credentials object."
+    }
+  },
+  "conformance": {
+    "gas_version": "1.0.0",
+    "schemas": {
+      "describe_agent": "https://www.geospatial-agentic-services.online/schemas/describe_agent.schema.json",
+      "task_response": "https://www.geospatial-agentic-services.online/schemas/task_response.schema.json",
+      "execute_task_request": "https://www.geospatial-agentic-services.online/schemas/execute_task_request.schema.json"
+    }
+  },
+  "provenance_and_reproducibility": {
+    "provenance": {
+      "supported": true,
+      "description": "Includes llm_calls, code_executions, token usage (input_tokens, output_tokens), number_of_artifacts, and retries in the response provenance section."
+    },
+    "reproducibility": {
+      "supported": true,
+      "description": "Returns the consolidated Python script used for execution in the script field. The script history is cleaned to remove redundant imports and file reads."
+    },
+    "validation": {
+      "supported": false,
+      "description": "Agent validates that registered raster artifacts include georeferencing metadata before saving and rejects ungeoreferenced arrays. It does not validate the domain correctness of every raster analysis result."
+    }
+  },
+  "governance": {
+    "access_control": {
+      "description": "Allowed roles set to ['all'] via the extension profile. No role-based access control is enforced."
+    },
+    "operation_policy": {
+      "description": "Python code execution in a sandboxed environment. Maximum 40 iterations. rasterio, rioxarray, geopandas, and numpy are pre-imported in the execution context."
+    },
+    "review_policy": {
+      "description": "output_review_required is set to false. No human-in-the-loop validation is required."
+    },
+    "policy_notes": "If the agent is used, please cite the relevant research on geospatial AI agents."
+  },
+  "extensions": {
+    "description": "This agent uses rasterio, rioxarray, geopandas, pandas, and numpy for raster and mixed spatial analysis. It maintains a persistent registry across code execution steps for intermediate variable storage and reuse. Supports raster clipping, band math, terrain analysis, rasterization, and combined raster-vector workflows. Raster outputs are GeoTIFF; vector outputs are GeoPackage by default unless GeoJSON is explicitly requested."
+  }
+}

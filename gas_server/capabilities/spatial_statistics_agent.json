@@ -1,0 +1,163 @@
+{
+  "profile": {
+    "agent_id": "spatial_statistics_agent",
+    "name": "Spatial Statistics Agent",
+    "description": "This agent is an expert PySAL spatial statistics service. It inspects input geospatial datasets, selects suitable PySAL ecosystem methods, runs spatial statistical or modeling workflows, and returns model outputs with a plain text report and polished HTML report.",
+    "version": "1.0.0",
+    "base_url": "https://www.geospatial-agentic-services.online/agents/spatial_statistics_agent",
+    "last_updated": "2026-05-16",
+    "provider": {
+      "name": "Geoinformation and Big Data Research Lab (GIBD)",
+      "website": "https://giscience.psu.edu",
+      "contacts": [
+        {
+          "name": "Zhenlong Li",
+          "email": "zhenlong@psu.edu"
+        }
+      ]
+    },
+    "default_model": "gpt-5.2"
+  },
+  "keywords": [
+    "PySAL",
+    "spatial statistics",
+    "spatial regression",
+    "ESDA",
+    "Moran",
+    "modeling"
+  ],
+  "skills": [
+    {
+      "skill_id": "pysal_spatial_statistics_and_modeling",
+      "name": "PySAL Spatial Statistics And Modeling",
+      "description": "Uses the PySAL ecosystem to support spatial weights, computational geometry, ESDA, distribution dynamics, inequality, urban morphology, point pattern analysis, segregation, network analysis, accessibility, geographically weighted modeling, spatial GLMs, interaction models, optimization, spatial regression, areal interpolation, map classification, and PySAL visualization workflows.",
+      "constraints": {
+        "spatial": "Requires valid geospatial inputs and suitable variables for the requested statistical model. Spatial weights and model assumptions must match the data and research question.",
+        "temporal": null,
+        "other": [
+          "The primary outputs include a plain text modeling report and a polished HTML modeling report.",
+          "Structured execution, provenance, diagnostics, and model metadata are returned in the standard JSON service response.",
+          "If maps or charts are generated, they should be included in the HTML report.",
+          "Advanced methods require the relevant PySAL ecosystem subpackages to be installed in the runtime.",
+          "The agent uses LLM-generated Python code with retries and falls back to a diagnostic report if execution fails."
+        ]
+      }
+    }
+  ],
+  "execute_task": {
+    "operation_id": "execute_task",
+    "name": "ExecuteTask",
+    "description": "Submits a natural-language geospatial task to the agent. The task.mode field controls sync, async, or stream execution.",
+    "request_schema": "https://www.geospatial-agentic-services.online/schemas/execute_task_request.schema.json",
+    "response_schema": "https://www.geospatial-agentic-services.online/schemas/task_response.schema.json",
+    "modes": [
+      "sync",
+      "async",
+      "stream"
+    ],
+    "task": {
+      "instructions": {
+        "required": true,
+        "description": "Natural-language task instructions."
+      }
+    },
+    "inputs": {
+      "input_datasets": {
+        "required": true,
+        "description": "Optional array of input datasets. Each item may be an HTTP/HTTPS URL, a server-accessible path, or a base64-encoded file object with filename, data, and optional mime_type.",
+        "supported_item_types": [
+          "URL",
+          "server_path",
+          "encoded_file_object"
+        ]
+      }
+    },
+    "outputs": {
+      "artifact_delivery": {
+        "required": false,
+        "default": "URL",
+        "allowed_values": [
+          "URL",
+          "Encoded"
+        ],
+        "description": "How generated artifacts are delivered in the standard response: 'URL' (default) or 'Encoded'."
+      },
+      "primary_artifacts": [
+        {
+          "type": "statistical_report",
+          "formats": [
+            "TXT",
+            "HTML"
+          ],
+          "required": true,
+          "description": "Spatial statistics or PySAL modeling report."
+        },
+        {
+          "type": "chart_or_map",
+          "formats": [
+            "PNG",
+            "HTML"
+          ],
+          "required": false,
+          "description": "Supporting maps or charts referenced by the HTML report when generated."
+        }
+      ]
+    },
+    "parameters": {
+      "model": {
+        "required": false,
+        "default": "gpt-5.2",
+        "description": "Optional model override. If omitted, the agent uses its default model."
+      },
+      "requested_skill": {
+        "required": false,
+        "description": "Advanced optional skill-selection hint. Most clients should omit this."
+      }
+    },
+    "credentials": {
+      "required": true,
+      "one_of": [
+        "OPENAI_API_KEY",
+        "GIBD_API_KEY"
+      ],
+      "description": "Provide one model execution credential in the request credentials object."
+    }
+  },
+  "conformance": {
+    "gas_version": "1.0.0",
+    "schemas": {
+      "describe_agent": "https://www.geospatial-agentic-services.online/schemas/describe_agent.schema.json",
+      "task_response": "https://www.geospatial-agentic-services.online/schemas/task_response.schema.json",
+      "execute_task_request": "https://www.geospatial-agentic-services.online/schemas/execute_task_request.schema.json"
+    }
+  },
+  "provenance_and_reproducibility": {
+    "provenance": {
+      "supported": true,
+      "description": "Includes llm_calls, tool_calls, token usage, duration, number_of_artifacts, selected PySAL method families, lineage, and fallback usage in the response provenance and complementary sections."
+    },
+    "reproducibility": {
+      "supported": true,
+      "description": "Returns generated Python code when execution succeeds, plus plain text report, polished HTML report, input dataset metadata, environment details, and artifact paths."
+    },
+    "validation": {
+      "supported": true,
+      "description": "Validates that the plain text report and HTML report artifacts are created. Statistical correctness still depends on data quality, variable choice, and model assumptions."
+    }
+  },
+  "governance": {
+    "access_control": {
+      "description": "Allowed roles set to ['all'] via the extension profile. No role-based access control is enforced."
+    },
+    "operation_policy": {
+      "description": "Generated Python code executes with a timeout and retry limit. The agent must use only provided datasets and should not download external data during modeling."
+    },
+    "review_policy": {
+      "description": "output_review_required is set to false. Users should review statistical assumptions, model diagnostics, and interpretations before operational use."
+    },
+    "policy_notes": "Spatial statistical outputs are decision-support artifacts and should be reviewed by qualified analysts for model validity and appropriate interpretation."
+  },
+  "extensions": {
+    "description": "This agent uses LLM-guided PySAL ecosystem code generation for spatial weights, ESDA, distribution dynamics, inequality, morphology, point patterns, segregation, network analysis, accessibility, geographically weighted modeling, spatial regression, optimization, interpolation, classification, and visualization workflows."
+  }
+}

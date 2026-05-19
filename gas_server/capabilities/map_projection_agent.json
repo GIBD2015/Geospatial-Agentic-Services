@@ -1,0 +1,156 @@
+{
+  "profile": {
+    "agent_id": "map_projection_agent",
+    "name": "Map Projection Agent",
+    "description": "This agent converts geospatial datasets between coordinate reference systems (CRS) using deterministic local pyproj/geopandas logic first, with optional model-assisted interpretation only when a request is ambiguous and model credentials are supplied. It supports single or multiple vector datasets, explicit authority codes such as EPSG:3857, common CRS names such as WGS 84 or Web Mercator, and local projected CRS inference from dataset extent when no target CRS is specified.",
+    "version": "2.0.0",
+    "base_url": "https://www.geospatial-agentic-services.online/agents/map_projection_agent",
+    "last_updated": "2026-04-28",
+    "provider": {
+      "name": "Geoinformation and Big Data Research Lab (GIBD)",
+      "website": "https://giscience.psu.edu",
+      "contacts": [
+        {
+          "name": "Ali Khosravi Kazazi",
+          "email": "abk6234@psu.edu"
+        }
+      ]
+    },
+    "default_model": null
+  },
+  "keywords": [
+    "CRS",
+    "projection",
+    "reprojection",
+    "coordinate reference system",
+    "GeoPandas"
+  ],
+  "skills": [
+    {
+      "skill_id": "coordinate_reference_system_transformation",
+      "name": "Coordinate Reference System Transformation",
+      "description": "Reads input geospatial datasets, validates or safely infers their existing CRS when possible, selects a target CRS from explicit user instructions or local pyproj/geopandas heuristics, optionally uses an LLM to choose from local CRS candidates for ambiguous requests, reprojects the datasets, and saves vector results as GeoPackage by default unless GeoJSON is explicitly requested.",
+      "constraints": {
+        "spatial": "Requires valid geometries. If an input dataset lacks CRS metadata but its bounds are within longitude/latitude ranges, the agent assumes EPSG:4326; otherwise it fails rather than guessing. Explicit target CRS requests are preferred over inferred choices.",
+        "temporal": null,
+        "other": [
+          "No external CRS lookup API is required.",
+          "Model credentials are optional. Without credentials, the agent uses deterministic local CRS rules only.",
+          "If OPENAI_API_KEY or GIBD_API_KEY is supplied, ambiguous requests may use model-assisted interpretation over a local candidate CRS list.",
+          "Explicit EPSG/ESRI/OGC/IGNF authority codes are handled deterministically.",
+          "Common CRS names such as WGS 84, Web Mercator, UTM, Conus Albers, and Lambert Conformal Conic are supported through local rules.",
+          "When no target CRS is specified, the agent estimates an appropriate UTM CRS for local datasets or uses EPSG:5070 for broad United States/equal-area contexts.",
+          "Invalid geometries are not automatically repaired."
+        ]
+      }
+    }
+  ],
+  "execute_task": {
+    "operation_id": "execute_task",
+    "name": "ExecuteTask",
+    "description": "Submits a natural-language geospatial task to the agent. The task.mode field controls sync, async, or stream execution.",
+    "request_schema": "https://www.geospatial-agentic-services.online/schemas/execute_task_request.schema.json",
+    "response_schema": "https://www.geospatial-agentic-services.online/schemas/task_response.schema.json",
+    "modes": [
+      "sync",
+      "async",
+      "stream"
+    ],
+    "task": {
+      "instructions": {
+        "required": true,
+        "description": "Natural-language task instructions."
+      }
+    },
+    "inputs": {
+      "input_datasets": {
+        "required": true,
+        "description": "Required array of vector input datasets. Each item may be an HTTP/HTTPS URL, a server-accessible path, or a base64-encoded file object with filename, data, and optional mime_type.",
+        "supported_item_types": [
+          "URL",
+          "server_path",
+          "encoded_file_object"
+        ]
+      }
+    },
+    "outputs": {
+      "artifact_delivery": {
+        "required": false,
+        "default": "URL",
+        "allowed_values": [
+          "URL",
+          "Encoded"
+        ],
+        "description": "How generated artifacts are delivered in the standard response: 'URL' (default) or 'Encoded'."
+      },
+      "primary_artifacts": [
+        {
+          "type": "reprojected_dataset",
+          "formats": [
+            "GeoPackage",
+            "GeoJSON"
+          ],
+          "required": true,
+          "description": "Input vector dataset transformed to the requested or inferred coordinate reference system. GeoPackage is the default output format unless GeoJSON is explicitly requested."
+        }
+      ]
+    },
+    "parameters": {
+      "model": {
+        "required": false,
+        "default": null,
+        "description": "Optional model override field accepted by the common GAS request schema. The built-in map projection agent uses deterministic local CRS selection by default. If model credentials are provided and the request requires LLM fallback for ambiguous projection intent, this model value may be used."
+      },
+      "requested_skill": {
+        "required": false,
+        "description": "Advanced optional skill-selection hint. Most clients should omit this."
+      }
+    },
+    "credentials": {
+      "required": false,
+      "one_of": [
+        "none",
+        "OPENAI_API_KEY",
+        "GIBD_API_KEY"
+      ],
+      "description": "No API key is required for deterministic CRS selection and reprojection. If OPENAI_API_KEY or GIBD_API_KEY is provided, the agent may use it as an optional LLM fallback for ambiguous natural-language projection requests."
+    }
+  },
+  "conformance": {
+    "gas_version": "1.0.0",
+    "schemas": {
+      "describe_agent": "https://www.geospatial-agentic-services.online/schemas/describe_agent.schema.json",
+      "task_response": "https://www.geospatial-agentic-services.online/schemas/task_response.schema.json",
+      "execute_task_request": "https://www.geospatial-agentic-services.online/schemas/execute_task_request.schema.json"
+    }
+  },
+  "provenance_and_reproducibility": {
+    "provenance": {
+      "supported": true,
+      "description": "Includes tool call count, optional LLM call count, token usage when an LLM fallback is used, duration, selected CRS, lineage steps, and number of generated artifacts."
+    },
+    "reproducibility": {
+      "supported": true,
+      "description": "Returns source/target CRS information, environment details, selected parameters, and output artifact paths. Reprojection is performed with geopandas and pyproj."
+    },
+    "validation": {
+      "supported": false,
+      "description": "Agent validates that inputs have usable geometry/CRS assumptions and that transformation succeeds. It does not validate whether an automatically selected CRS is cartographically optimal for every downstream use."
+    }
+  },
+  "governance": {
+    "access_control": {
+      "description": "Allowed roles set to ['all'] via the extension profile. No role-based access control is enforced."
+    },
+    "operation_policy": {
+      "description": "CRS selection and reprojection are performed locally and deterministically using pyproj/geopandas whenever possible. Explicit CRS requests are honored first; inferred CRS choices are based on request keywords and dataset extent. If model credentials are supplied, ambiguous natural-language requests may use an LLM to choose from locally generated CRS candidates. No third-party CRS search service is called."
+    },
+    "review_policy": {
+      "description": "output_review_required is set to false. No human-in-the-loop validation is required."
+    },
+    "policy_notes": "If the agent is used, please cite the relevant research on geospatial AI agents."
+  },
+  "extensions": {
+    "description": "This agent uses geopandas and pyproj for CRS selection and reprojection. It supports explicit authority codes, common CRS names, UTM estimation, EPSG:5070 for broad United States/equal-area workflows, optional LLM fallback over local CRS candidates for ambiguous requests, and GeoPackage output by default unless GeoJSON is explicitly requested."
+  }
+}

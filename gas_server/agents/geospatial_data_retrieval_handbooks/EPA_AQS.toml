@@ -1,0 +1,90 @@
+# The ID of the data source is the name of this file: EPA_AQS.toml
+
+# Data source name. Should be clear, meaningful, and human readable.
+data_source_name = 'EPA Air Quality System (AQS)'
+
+# provide a brief description (1 line) of the data source to inform AI whether need to use this data source.
+# Need to contain critical information such as extent and period.
+brief_description = '''
+EPA AQS provides daily and annual air quality monitoring data (PM2.5, PM10, ozone, NO2, SO2, CO, lead, etc.) for the United States. Data is available from 1980s onward through the present, at the monitor, county, CBSA, and state level.
+'''
+
+# Put the technical requirements or details for the data source. One line for a requirement. No need to number them.
+# If the data source needs credentials, keep placeholders in the handbook and
+# provide values at request time in credentials.source_credentials.
+# Example: {"EPA_AQS": {"email": "...", "key": "..."}}.
+# NEVER hard-code credentials in this handbook.
+handbook = '''
+The EPA AQS API email is: {EPA_AQS_email}
+The EPA AQS API key is: {EPA_AQS_key}
+Register for credentials at: https://aqs.epa.gov/data/api/signup?email={your_email}
+The base URL for all endpoints is: https://aqs.epa.gov/data/api/
+Authentication is passed as query parameters: email={email}&key={key}
+All date parameters use the format YYYYMMDD (e.g., bdate=20230101, edate=20231231).
+The maximum date range per request is 366 days (one calendar year); use multiple requests for longer periods.
+Available geographic levels: byState, byCounty, byBMAA, byCBSA, byBox, bySite.
+The byCounty endpoint requires an explicit county FIPS code and can only return data for one county at a time. To download data for all counties in a state, always use byState instead — it returns all monitors statewide in a single request.
+State FIPS codes are two-digit strings (e.g., state=42 for Pennsylvania, state=06 for California).
+Common parameter codes: 88101 (PM2.5 FRM/FEM), 88502 (PM2.5 non-FRM), 44201 (Ozone), 42101 (CO), 42401 (SO2), 42602 (NO2), 81102 (PM10), 14129 (Lead).
+The dailyData endpoint returns daily summary statistics per monitor; the annualData endpoint returns annual summaries.
+Key response fields: arithmetic_mean (average concentration), first_max_value (daily max), aqi (Air Quality Index, only populated for 24-hour standard), validity_indicator (Y = valid).
+Filter to validity_indicator == 'Y' to keep only quality-assured observations.
+AQI is only populated when the pollutant_standard matches the regulatory standard (e.g., PM2.5 24-hour 2012); hourly or non-standard records will have aqi = None.
+The response JSON has two keys: Header (status and error messages) and Data (list of records).
+Always check Header[0]['status'] == 'Success' before processing Data.
+Large requests (e.g., full year, statewide) may return tens of thousands of records; load into a pandas DataFrame for analysis.
+Put your reply into a Python code block. Explanation or conversation can be Python comments at the beginning of the code block (enclosed by ```python and ```).
+The download code is only in a function named 'download_data()'. The last line is to execute this function.
+Save the results in a CSV file.
+DO NOT handle any exceptions; we need the error information for debugging.
+'''
+
+# Python code example for the data source.
+code_example = '''
+import requests
+import pandas as pd
+
+def download_data():
+    # EPA AQS API credentials
+    email = "your_email@example.com"
+    key = "your_api_key"
+
+    # --- Endpoint configuration ---
+    # Geographic level options: dailyData/byState, dailyData/byCounty, dailyData/bySite, etc.
+    # Annual summary:           annualData/byState, annualData/byCounty, etc.
+    base_url = "https://aqs.epa.gov/data/api/dailyData/byState" #To download data for all counties in a state, always use byState, it returns all counties in a state. ByCounty returns data for one county at a time.
+
+    params = {
+        "email": email,
+        "key": key,
+        "param": "88101",       # PM2.5 FRM/FEM
+        "bdate": "20230101",    # Start date: YYYYMMDD
+        "edate": "20231231",    # End date: YYYYMMDD (max 366 days per request)
+        "state": "42",          # Pennsylvania FIPS
+    }
+
+    # --- Download ---
+    response = requests.get(base_url, params=params)
+    response.raise_for_status()
+    data = response.json()
+
+    # Check API-level status
+    header = data.get("Header", [{}])[0]
+    assert header.get("status") == "Success", f"API error: {header.get('error')}"
+
+    # --- Load into DataFrame ---
+    df = pd.DataFrame(data["Data"])
+    print(f"Records returned: {len(df)}")
+
+    # --- Basic cleaning ---
+    df["date_local"] = pd.to_datetime(df["date_local"])
+    df = df[df["validity_indicator"] == "Y"]   # Keep only valid observations
+    df["arithmetic_mean"] = pd.to_numeric(df["arithmetic_mean"], errors="coerce")
+
+    # --- Save ---
+    output_file = "pa_pm25_daily_2023.csv"
+    df.to_csv(output_file, index=False)
+    print(f"Saved {len(df)} rows to {output_file}")
+
+download_data()
+'''

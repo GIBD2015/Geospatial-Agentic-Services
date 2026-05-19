@@ -1,0 +1,172 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://www.geospatial-agentic-services.online/schemas/execute_task_request.schema.json",
+  "title": "GAS ExecuteTask Request",
+  "description": "Canonical request body for submitting a task to a Geospatial Agentic Service.",
+  "type": "object",
+  "required": [
+    "task"
+  ],
+  "properties": {
+    "task": {
+      "type": "object",
+      "description": "The user task and requested interaction mode.",
+      "required": [
+        "instructions"
+      ],
+      "properties": {
+        "instructions": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Natural-language instructions describing what the agent should do."
+        },
+        "mode": {
+          "type": "string",
+          "enum": [
+            "sync",
+            "async",
+            "stream"
+          ],
+          "default": "sync",
+          "description": "Interaction mode. sync waits for the final response, async returns a task_id immediately, and stream returns progress events followed by the final response."
+        }
+      },
+      "additionalProperties": true
+    },
+    "inputs": {
+      "type": "object",
+      "description": "Formal task inputs consumed by the agent.",
+      "properties": {
+        "input_datasets": {
+          "type": "array",
+          "description": "Input dataset files. Each item may be a URL/path string or an encoded dataset object.",
+          "items": {
+            "oneOf": [
+              {
+                "type": "string",
+                "minLength": 1,
+                "description": "HTTP/HTTPS URL or server-accessible path to a dataset."
+              },
+              {
+                "$ref": "#/$defs/encoded_dataset"
+              }
+            ]
+          }
+        }
+      },
+      "additionalProperties": true
+    },
+    "outputs": {
+      "type": "object",
+      "description": "Client preferences for generated outputs and artifact delivery.",
+      "properties": {
+        "artifact_delivery": {
+          "type": "string",
+          "enum": [
+            "URL",
+            "Encoded"
+          ],
+          "default": "URL",
+          "description": "How generated artifact files are represented inside the standard GAS response. URL returns downloadable links; Encoded embeds base64 content."
+        }
+      },
+      "additionalProperties": true
+    },
+    "parameters": {
+      "type": "object",
+      "description": "Execution parameters that affect how the agent runs.",
+      "properties": {
+        "model": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Optional model name for this task. If omitted, the agent uses its default model."
+        },
+        "requested_skill": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "Advanced optional hint for selecting a specific skill from the agent capability document. Most requests should omit this field and let the agent interpret the task instructions."
+        }
+      },
+      "additionalProperties": true
+    },
+    "credentials": {
+      "type": "object",
+      "description": "Runtime secrets supplied by the caller. Credential field names and requirements are agent-specific and should follow the selected agent's DescribeAgent document. OPENAI_API_KEY and GIBD_API_KEY are common fields used by the built-in example agents, but other agents may document different model-provider, local-model, or data-source credentials.",
+      "properties": {
+        "OPENAI_API_KEY": {
+          "type": "string",
+          "minLength": 1,
+          "description": "OpenAI API key for agents that explicitly support OpenAI-backed execution."
+        },
+        "GIBD_API_KEY": {
+          "type": "string",
+          "minLength": 1,
+          "description": "GIBD API key for agents that explicitly support the GIBD OpenAI-compatible access layer."
+        }
+      },
+      "additionalProperties": true
+    },
+    "metadata": {
+      "type": "object",
+      "description": "Optional client-side context for tracing, logging, reproducibility, or orchestration.",
+      "properties": {
+        "client_id": {
+          "type": "string"
+        },
+        "request_id": {
+          "type": "string"
+        },
+        "trace_id": {
+          "type": "string"
+        },
+        "project": {
+          "type": "string"
+        },
+        "submitted_by": {
+          "type": "string"
+        },
+        "notes": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": true
+    }
+  },
+  "$defs": {
+    "encoded_dataset": {
+      "type": "object",
+      "description": "Base64-encoded dataset file object.",
+      "required": [
+        "filename",
+        "data"
+      ],
+      "properties": {
+        "filename": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Original file name, including extension."
+        },
+        "data": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Base64-encoded file content."
+        },
+        "encoding": {
+          "type": "string",
+          "enum": [
+            "base64"
+          ],
+          "default": "base64"
+        },
+        "mime_type": {
+          "type": "string",
+          "description": "Optional media type of the file."
+        }
+      },
+      "additionalProperties": true
+    }
+  },
+  "additionalProperties": true
+}
