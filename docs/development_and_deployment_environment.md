@@ -199,6 +199,53 @@ The port in these examples can be changed. In many deployments, a reverse proxy
 such as Nginx, Caddy, or Apache listens on ports `80` and `443`, then forwards
 requests to the internal WSGI server port.
 
+## Cloud Hosting Options
+
+GAS can be hosted on many cloud platforms because it is a normal Python web
+application. The best choice depends on whether the deployment is a short demo,
+a moderate public service, or a heavy geoprocessing server.
+
+Common options:
+
+- **PythonAnywhere**: convenient for prototypes, teaching, and lightweight
+  demos. A paid plan is usually needed for always-on web apps and outbound
+  internet access. It is easiest when the hosted agents have modest dependency
+  and compute requirements.
+- **Render or Railway**: practical for moderate production-style deployments.
+  These platforms are friendly to Git-based deployment and environment
+  variables. Use them when the agents are mostly web/API, data retrieval,
+  lightweight vector processing, or model-backed workflows.
+- **Google Cloud Run, AWS Fargate, or similar container services**: good when
+  you want containerized deployment, autoscaling, and managed infrastructure.
+  They work well with Docker images, but cold starts can affect the first
+  request after an idle period. For streaming tasks, long-running tasks, and
+  large geospatial jobs, configure request timeouts, CPU allocation, memory,
+  and concurrency carefully.
+- **Dedicated VPS providers such as DigitalOcean, Hetzner, AWS EC2, Google
+  Compute Engine, or Azure Virtual Machines**: often the best fit for heavier
+  geoprocessing, large raster processing, persistent disk needs, custom GDAL
+  builds, or long-running agents. A VPS gives more control over system
+  packages, disk layout, background workers, reverse proxies, and monitoring.
+
+Important geospatial dependency note: packages such as GeoPandas, Rasterio,
+Fiona, PyProj, Shapely, and PySAL may depend on native geospatial libraries
+such as GDAL, GEOS, and PROJ. Some cloud platforms make these dependencies easy;
+others require custom build steps. For robust deployment, prefer one of these
+approaches:
+
+- Use a Docker image that installs the needed system packages and Python
+  dependencies together.
+- Use a platform that explicitly supports native system dependencies.
+- Use conda/mamba on a VPS when that is simpler than compiling geospatial
+  libraries from source.
+- Test imports for `geopandas`, `rasterio`, `pyproj`, and any agent-specific
+  libraries during deployment, not only after the server starts.
+
+For public deployments, store model-provider keys, data-source keys, and other
+deployment secrets in the cloud provider's secret/environment-variable system.
+Do not bake credentials into notebooks, Docker images, capability JSON files,
+or source code.
+
 Production checklist:
 
 - Choose the public domain and HTTPS endpoint.
