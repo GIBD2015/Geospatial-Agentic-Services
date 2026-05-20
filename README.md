@@ -233,7 +233,8 @@ client.print_task_summary(result)
 The SDK source is kept in [gas_client](gas_client), and its standalone package
 files are in [packages/gas-client](packages/gas-client). See
 [packages/gas-client/README.md](packages/gas-client/README.md) for the client
-API, streaming examples, and publishing checklist.
+API and streaming examples. Maintainer publishing notes are in
+[docs/gas_client_publishing.md](docs/gas_client_publishing.md).
 
 ## Example Notebooks
 

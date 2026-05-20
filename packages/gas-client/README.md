@@ -8,17 +8,17 @@ dependencies.
 
 ## Install
 
-Install from the package folder during development:
+Install from PyPI:
+
+```powershell
+python -m pip install gas-client
+```
+
+For local development from this repository:
 
 ```powershell
 cd packages/gas-client
 python -m pip install -e .
-```
-
-After publication:
-
-```powershell
-python -m pip install gas-client
 ```
 
 ## Quick Start
@@ -109,29 +109,3 @@ Important methods:
 - `encode_dataset_file(path)`
 - `print_stream_event(event)`
 - `print_task_summary(result)`
-
-## Publishing Checklist
-
-Before publishing publicly:
-
-- Confirm the final package name on PyPI.
-- Update `version` in `pyproject.toml`.
-- Sync the package copy from the repository root if `gas_client/` changed.
-- Run client tests from the repository root.
-- Build and inspect the package.
-
-```powershell
-cd <repo-root>
-.\packages\gas-client\sync_from_repo.ps1
-.\.venv\Scripts\python.exe -m pytest tests\test_gas_client.py
-
-cd packages\gas-client
-python -m build
-python -m twine check dist/*
-```
-
-Upload only when ready:
-
-```powershell
-python -m twine upload dist/*
-```
