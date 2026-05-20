@@ -11,7 +11,7 @@ the Geospatial Agentic Services (GAS) framework. It publishes geospatial agents
 as independent web services, discoverable through
 `GetCapabilities` and `DescribeAgent` JSON documents.
 
-The included agents are working GAS services and concrete implementation
+The included agents are working GAS services and implementation
 examples. Developers can use them as references for different design patterns,
 including deterministic geospatial workflows, model-assisted code generation,
 data retrieval, mapping, raster analysis, vector analysis, data inspection, and
@@ -69,9 +69,7 @@ gas_server/capabilities/my_new_agent.json
 ```
 
 The agent should inherit from `GeoAgent` and implement the standard `run()`
-method. Do not implement `run_service()` in agent files; the base
-`GeoAgent.run_service()` method is the shared service adapter used by the GAS
-server.
+method. 
 
 ```python
 from gas_server.core.geo_agent import GeoAgent
@@ -234,9 +232,7 @@ The SDK source is kept in [gas_client](gas_client), and its standalone package
 files are in [packages/gas-client](packages/gas-client). See
 [docs/gas_client_sdk.md](docs/gas_client_sdk.md) for the SDK API and usage
 guide. The package README is in
-[packages/gas-client/README.md](packages/gas-client/README.md). Maintainer
-publishing notes are in
-[docs/gas_client_publishing.md](docs/gas_client_publishing.md).
+[packages/gas-client/README.md](packages/gas-client/README.md).
 
 ## Example Notebooks
 

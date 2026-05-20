@@ -87,7 +87,7 @@ gas_server/core/config.py
 The Flask development server is useful for local development, testing,
 notebooks, and demos. It should not be treated as the production web server.
 
-## Discovery Smoke Test
+## Get Capabilities Test
 
 After starting the server, test discovery in a browser or Python client:
 

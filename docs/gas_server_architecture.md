@@ -1,14 +1,14 @@
-# GAS Server Architecture
+# GAS Server Framework
 
-This repository is a concrete implementation of the server component of the
+This repository is an implementation of the server component of the
 Geospatial Agentic Services (GAS) framework. It publishes geospatial agents as
 web services and provides the shared server framework for discovery,
 task execution, streaming progress, artifact delivery, and standard response
 normalization.
 
 One important design goal is plugin-style extension: a developer should be able
-to add a new geospatial capability by adding a small number of files, without
-editing the shared server framework.
+to add a new geospatial agent by adding a small number of files, without
+editing the shared code files.
 
 This implementation is designed to reflect the service-oriented GAS concepts
 described in the paper [Geospatial Agentic Services: A Framework for
@@ -17,7 +17,7 @@ Intelligence](https://www.researchgate.net/publication/404738967_Geospatial_Agen
 Readers who want the broader motivation, terminology, and interoperability
 model should refer to that paper alongside this developer documentation.
 
-## Architectural Idea
+## Service-Oriented Architecture
 
 The GAS server follows a service-oriented architecture (SOA). Each geospatial
 agent is treated as an individual service with its own public capability

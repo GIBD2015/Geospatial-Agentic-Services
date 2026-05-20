@@ -4,14 +4,14 @@ This GAS server implementation publishes every GIS agent as a GAS web service.
 Each service gets the same standard operations from the shared service
 framework, while the agent implementation can be completely different.
 
-The agents included in this repository are intended to be used as concrete
+The agents included in this repository are intended to be used as
 implementation examples as well as working services. Before adding a new agent,
 it is often helpful to inspect an existing agent with a similar style: for
 example, a deterministic analysis agent, a model-assisted code-generation
 agent, a data retrieval agent, a mapping agent, or a report-generating agent.
 See [included_agents.md](included_agents.md) for a catalog of these examples.
 
-Adding a new agent service is intentionally lightweight. In the common case,
+Adding a new agent service is lightweight. In the common case,
 you add three small pieces:
 
 ```text
@@ -20,10 +20,10 @@ you add three small pieces:
 3. Capability document:   gas_server/capabilities/my_new_agent.json
 ```
 
-The shared GAS framework handles the repetitive server work: routing, request
+The GAS server handles the repetitive server work: routing, request
 parsing, input dataset materialization, sync/async/stream modes, task status,
 artifact delivery, response normalization, and schema validation through tests.
-As an agent developer, you mainly focus on the geospatial capability itself and
+The agent developer mainly focuses on the geospatial capability itself and
 keep the `DescribeAgent` JSON aligned with what the agent actually supports.
 
 The basic workflow is:
@@ -40,11 +40,8 @@ Create a file in `gas_server/agents`, for example:
 gas_server/agents/my_new_agent.py
 ```
 
-New agents should inherit from `GeoAgent` and implement the standard `run()`
-method. Developers should not implement `run_service()` in agent files. The
-base `GeoAgent.run_service()` method is the single service adapter used by the
-GAS server, and it calls `run(query, input_dataset_paths, progress_callback=...)`
-for every agent.
+New agents must inherit from `GeoAgent` and implement the standard `run()`
+method. 
 
 ```python
 from gas_server.core.geo_agent import GeoAgent
@@ -162,7 +159,7 @@ Rule of thumb: keep `stage` reusable across agents, keep `message` specific to
 the current task, and put counts, filenames, attempts, or selected methods in
 `data`.
 
-## 2. Add The Service File
+## 2. Publish the Agent as a GAS Service
 
 Create:
 
@@ -183,7 +180,7 @@ Everything below the registration line should usually stay unchanged.
 
 This file publishes the agent as a GAS service. It should stay intentionally
 small: import the agent class, register it, and expose the shared lazy app/spec
-accessors. New services do not require central registry edits.
+accessors. 
 
 ```python
 from __future__ import annotations
@@ -391,8 +388,8 @@ is part of the public service interface. A service consumer should be able to
 determine from the capability document whether the agent needs an LLM API key,
 a data-source key, both, or no key at all.
 
-Credential design is intentionally agent-specific. A new agent developer may
-choose to support OpenAI, GIBD, Gemini, DeepSeek, a local/open-source model, a
+Credential design is agent-specific. A new agent developer may
+choose to support OpenAI, Gemini, DeepSeek, a local/open-source model, a
 deployment-provided built-in key, source-specific API keys, or a fully
 deterministic workflow with no LLM key. The GAS framework only defines where
 runtime credentials are supplied:

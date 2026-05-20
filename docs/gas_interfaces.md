@@ -23,7 +23,6 @@ gas_server/schemas/capabilities.schema.json
 gas_server/schemas/describe_agent.schema.json
 gas_server/schemas/execute_task_request.schema.json
 gas_server/schemas/task_response.schema.json
-gas_server/schemas/execute_task_request.example.json
 ```
 
 `capabilities.json` and each `{agent_id}.json` file are service documents.
@@ -773,7 +772,7 @@ Example report artifact:
 ## Developer Guidance
 
 Agent developers do not need to manually assemble every response section or
-check every schema while writing a new agent. The GAS server framework handles
+check every schema while developing a new agent. The GAS server handles
 much of the common interface work, including request parsing, input dataset
 materialization, task status handling, streaming lifecycle events, artifact
 delivery, artifact inspection, response normalization, and schema validation in
