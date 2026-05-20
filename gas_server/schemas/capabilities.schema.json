@@ -15,6 +15,9 @@
     "agents"
   ],
   "properties": {
+    "$schema": {
+      "type": "string"
+    },
     "service": {
       "type": "string",
       "enum": ["GAS"]

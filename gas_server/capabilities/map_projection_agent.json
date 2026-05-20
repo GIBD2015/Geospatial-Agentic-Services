@@ -1,4 +1,5 @@
 {
+  "$schema": "https://www.geospatial-agentic-services.online/schemas/describe_agent.schema.json",
   "profile": {
     "agent_id": "map_projection_agent",
     "name": "Map Projection Agent",

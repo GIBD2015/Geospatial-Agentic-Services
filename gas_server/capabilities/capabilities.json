@@ -1,4 +1,5 @@
 {
+  "$schema": "https://www.geospatial-agentic-services.online/schemas/capabilities.schema.json",
   "service": "GAS",
   "version": "1.0.0",
   "base_url": "https://www.geospatial-agentic-services.online",

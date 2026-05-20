@@ -1,4 +1,5 @@
 {
+  "$schema": "https://www.geospatial-agentic-services.online/schemas/describe_agent.schema.json",
   "profile": {
     "agent_id": "geospatial_data_inspection_agent",
     "name": "Geospatial Data Inspection Agent",
