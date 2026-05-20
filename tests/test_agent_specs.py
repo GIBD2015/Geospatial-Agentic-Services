@@ -124,6 +124,15 @@ def test_mapping_agent_fast_renderer_handles_common_choropleth_classification_te
 
     agent = MappingAgent(api_key=None)
 
+    assert not agent._should_try_fast_renderer(
+        "Create a choropleth map using 5 quantile classes.",
+        [str(dataset_path)],
+    )
+    assert agent._should_try_fast_renderer(
+        "Create a quick map using 5 quantile classes.",
+        [str(dataset_path)],
+    )
+    agent.set_request_parameters({"renderer": "deterministic"})
     assert agent._should_try_fast_renderer(
         "Create a choropleth map using 5 quantile classes.",
         [str(dataset_path)],
@@ -296,6 +305,24 @@ def test_raster_agent_rejects_ungeoreferenced_numpy_artifact(tmp_path, monkeypat
 
     with pytest.raises(ValueError, match="missing georeferencing metadata"):
         agent._save_result("Save raw array")
+
+
+def test_raster_agent_fails_fast_when_rasterio_missing(monkeypatch):
+    import gas_server.agents.raster_agent as raster_module
+
+    monkeypatch.setattr(raster_module, "rasterio", None)
+
+    agent = RasterAgent(api_key=None)
+    result = agent.run(
+        "Rasterize the polygons to a GeoTIFF using 100-meter pixels.",
+        ["dummy.geojson"],
+    )
+
+    assert result["agent_name"] == "Raster Agent"
+    assert result["agent_version"] == "3.0.0"
+    assert result["outputs"]["dataset_paths"] == []
+    assert "rasterio is required" in result["outputs"]["text"]
+    assert result["metrics"]["llm_calls"] == 0
 
 
 def test_raster_agent_meter_rasterization_requires_projected_crs(tmp_path, monkeypatch):
@@ -635,6 +662,75 @@ def test_geospatial_data_retrieval_direct_census_county_population_workflow(monk
     assert set(result["GEOID"]) == {"01001", "06001"}
     assert result["B01001_001E:Total:"].tolist() == [1000, 3000]
     assert set(result["year"]) == {"2021"}
+
+
+def test_geospatial_data_retrieval_direct_census_population_respects_csv_request(monkeypatch, tmp_path):
+    gpd = pytest.importorskip("geopandas")
+    pd = pytest.importorskip("pandas")
+    shapely_geometry = pytest.importorskip("shapely.geometry")
+
+    boundary_gdf = gpd.GeoDataFrame(
+        {
+            "STATEFP": ["42", "42"],
+            "COUNTYFP": ["001", "003"],
+            "GEOID": ["42001", "42003"],
+            "NAME": ["Adams", "Allegheny"],
+            "geometry": [shapely_geometry.box(i, 0, i + 1, 1) for i in range(2)],
+        },
+        crs="EPSG:4326",
+    )
+
+    original_read_file = gpd.read_file
+
+    def fake_read_file(path):
+        if "cb_2021_us_county_500k.zip" in str(path):
+            return boundary_gdf
+        return original_read_file(path)
+
+    class FakeResponse:
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return [
+                ["NAME", "B01001_001E", "state", "county"],
+                ["Adams County, Pennsylvania", "1000", "42", "001"],
+                ["Allegheny County, Pennsylvania", "2000", "42", "003"],
+            ]
+
+    monkeypatch.setattr("gas_server.agents.geospatial_data_retrieval_agent.gpd.read_file", fake_read_file)
+    monkeypatch.setattr(
+        "gas_server.agents.geospatial_data_retrieval_agent.requests.get",
+        lambda *args, **kwargs: FakeResponse(),
+    )
+
+    agent = GeospatialDataRetrievalAgent(api_key=None)
+    agent.output_dir = str(tmp_path)
+
+    direct = agent.try_direct_census_county_population_download(
+        "Download PA county population data for 2021 as CSV",
+        "US Census Bureau demography",
+        "county_population",
+    )
+
+    assert direct["path"].endswith(".csv")
+    result = pd.read_csv(direct["path"])
+    assert result["GEOID"].astype(str).tolist() == ["42001", "42003"]
+    assert result["B01001_001E:Total:"].tolist() == [1000, 2000]
+    assert "geometry" not in result.columns
+    assert "geometry_wkt" in result.columns
+    assert "saved CSV" in direct["script"]
+
+    validation = agent.self_validate_result(
+        "Download PA county population data for 2021 as CSV",
+        direct["path"],
+        [direct["path"]],
+    )
+    assert validation["status"] == "passed"
+    assert any(
+        check["name"] == "requested_format" and check["status"] == "passed"
+        for check in validation["checks"]
+    )
 
 
 def test_geospatial_data_retrieval_normalizes_broad_census_population_source():

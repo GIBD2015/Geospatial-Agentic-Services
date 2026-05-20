@@ -37,7 +37,9 @@
         "temporal": null,
         "other": [
           "Code execution is strictly limited to a 60-second timeout.",
-          "Agent will attempt to fix code errors a maximum of 10 times (max_iterations) before falling back to a deterministic renderer.",
+          "The default workflow is LLM-backed cartographic code generation for polished static maps and charts.",
+          "Agent will attempt to fix code errors up to the configured max_iterations value before falling back to a deterministic renderer.",
+          "The deterministic renderer is also available as an explicit quick-mapping option.",
           "Agent is strictly forbidden from downloading data from external sources during execution."
         ]
       }
@@ -63,7 +65,7 @@
     "inputs": {
       "input_datasets": {
         "required": true,
-        "description": "Optional array of input datasets. Each item may be an HTTP/HTTPS URL, a server-accessible path, or a base64-encoded file object with filename, data, and optional mime_type.",
+        "description": "Required array of input datasets. Each item may be an HTTP/HTTPS URL, a server-accessible path, or a base64-encoded file object with filename, data, and optional mime_type.",
         "supported_item_types": [
           "URL",
           "server_path",
@@ -97,6 +99,32 @@
         "required": false,
         "default": "gpt-5.4",
         "description": "Optional model override. If omitted, the agent uses its default model."
+      },
+      "renderer": {
+        "required": false,
+        "default": "llm",
+        "allowed_values": [
+          "llm",
+          "deterministic",
+          "quick",
+          "fast"
+        ],
+        "description": "Optional renderer selection. By default, the agent uses the LLM-backed cartographic workflow. Use 'deterministic', 'quick', or 'fast' only when a quick built-in map/chart renderer is preferred over polished LLM-generated cartography."
+      },
+      "quick_mapping": {
+        "required": false,
+        "default": false,
+        "description": "Optional boolean. If true, the agent uses the deterministic quick-mapping renderer when the input is suitable."
+      },
+      "force_llm": {
+        "required": false,
+        "default": false,
+        "description": "Optional boolean. If true, the agent skips the deterministic quick renderer and uses the LLM-backed workflow."
+      },
+      "max_iterations": {
+        "required": false,
+        "default": 8,
+        "description": "Optional integer controlling the maximum number of LLM code-generation repair attempts. Values are constrained by the server implementation."
       },
       "requested_skill": {
         "required": false,
@@ -139,7 +167,7 @@
       "description": "Allowed roles set to ['all'] via the extension profile. No role-based access control is enforced."
     },
     "operation_policy": {
-      "description": "Python code execution sandbox strictly times out after 60 seconds. Maximum 10 LLM iterations. Agent is forbidden from downloading external data during execution."
+      "description": "Python code execution sandbox strictly times out after 60 seconds. The default workflow uses LLM-backed cartographic code generation. The deterministic renderer is opt-in through request parameters or explicit quick-mapping instructions, and is also used as a fallback if LLM-generated visualization code repeatedly fails. Agent is forbidden from downloading external data during execution."
     },
     "review_policy": {
       "description": "output_review_required is set to false. No human-in-the-loop validation is required."
@@ -147,6 +175,6 @@
     "policy_notes": "If the agent is used, please cite the paper on the visualization agent."
   },
   "extensions": {
-    "description": "This agent uses matplotlib, geopandas, pandas, and mapclassify to generate visual outputs. It is designed for geospatial data visualization tasks and can handle various input formats to produce maps and charts. Supports classified (choropleth) and unclassified (uniform color) map styles, as well as bar and line charts."
+    "description": "This agent uses matplotlib, geopandas, pandas, and mapclassify to generate visual outputs. It is designed for geospatial data visualization tasks and can handle various input formats to produce maps and charts. By default, it uses an LLM-backed cartographic workflow for more polished static maps and charts. A deterministic quick renderer is available when requested through natural-language instructions such as 'quick map' or through parameters such as renderer='deterministic' or quick_mapping=true. Supports classified (choropleth) and unclassified (uniform color) map styles, as well as bar and line charts."
   }
 }

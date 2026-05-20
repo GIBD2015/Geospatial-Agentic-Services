@@ -131,6 +131,63 @@ class WebMappingAppAgent(GeoAgent):
     def _dataset_context(self, dataset_paths: list[str]) -> list[dict[str, Any]]:
         return [self._inspect_dataset(path) for path in dataset_paths]
 
+    def _prepare_leaflet_dataset_paths(self, dataset_paths: list[str], progress_callback=None) -> list[str]:
+        """Return dataset paths that are safe to use directly in Leaflet/Folium.
+
+        Leaflet expects vector coordinates in longitude/latitude (EPSG:4326).
+        Many GAS analysis agents return projected GeoJSON or GeoPackage files,
+        so this preparation step writes WGS84 GeoJSON copies before the LLM sees
+        the paths. That keeps generated web-map code robust even when it simply
+        reads a file and passes it to Folium/Leaflet.
+        """
+
+        prepared_paths: list[str] = []
+        vector_extensions = {".geojson", ".json", ".gpkg", ".shp", ".gml", ".kml"}
+        prepared_dir = Path(self.output_dir) / "leaflet_ready_inputs"
+        prepared_dir.mkdir(parents=True, exist_ok=True)
+
+        for index, path in enumerate(dataset_paths):
+            dataset = Path(path)
+            if dataset.suffix.lower() not in vector_extensions or not dataset.exists():
+                prepared_paths.append(path)
+                continue
+
+            try:
+                gdf = gpd.read_file(dataset)
+                if gdf.empty:
+                    prepared_paths.append(path)
+                    continue
+
+                source_crs = str(gdf.crs) if gdf.crs else None
+                if gdf.crs is not None:
+                    gdf = gdf.to_crs("EPSG:4326")
+                target_path = prepared_dir / f"input_{index + 1}_{dataset.stem}_wgs84.geojson"
+                gdf.to_file(target_path, driver="GeoJSON")
+                prepared_paths.append(str(target_path))
+
+                if source_crs and source_crs.lower() not in {"epsg:4326", "wgs84"}:
+                    self._emit_progress(
+                        progress_callback,
+                        stage="normalization",
+                        message=(
+                            f"I reprojected {dataset.name} to EPSG:4326 so the web map can render it correctly in Leaflet."
+                        ),
+                        data={"input_path": str(dataset), "prepared_path": str(target_path), "source_crs": source_crs},
+                    )
+            except Exception as exc:
+                self.last_error = f"{self.last_error}\nCould not prepare {dataset.name} for Leaflet: {exc}".strip()
+                self._emit_progress(
+                    progress_callback,
+                    stage="warning",
+                    message=(
+                        f"I could not create a Leaflet-ready WGS84 copy of {dataset.name}, so I will use the original path."
+                    ),
+                    data={"input_path": str(dataset), "error": str(exc)},
+                )
+                prepared_paths.append(path)
+
+        return prepared_paths
+
     def _build_prompt(self, task: str, dataset_paths: list[str], dataset_context: list[dict[str, Any]], output_path: str) -> list[dict[str, str]]:
         system = (
             "You are an expert geospatial web mapping application development agent. Generate robust "
@@ -148,6 +205,14 @@ class WebMappingAppAgent(GeoAgent):
             "Do not satisfy this requirement only with sidebar checkboxes or explanatory text. "
             "Legends must be compact, readable, and placed in a sidebar or bottom-right control area; "
             "do not create a long horizontal legend across the map. "
+            "Legend swatches must use valid CSS colors such as hex, named colors, rgb(...), or rgba(...); "
+            "never write Python or Matplotlib color tuples such as background:(0.5, 0.2, 0.1, 1.0). "
+            "Do not place a full-width information panel over the map. If you add explanatory content, "
+            "use a compact sidebar or a collapsible panel that leaves most of the map visible. "
+            "Leaflet and Folium map layers must use longitude/latitude coordinates in EPSG:4326. "
+            "The provided vector dataset paths are already prepared for Leaflet when possible; do not replace them "
+            "with the original projected coordinates. If you read any vector data yourself, convert it to EPSG:4326 "
+            "before creating GeoJSON, Choropleth, or GeoJson layers. "
             "Do not download external datasets. Use only the provided dataset paths. "
             "The code must save the final HTML app to the exact OUTPUT_HTML path and print "
             "`__OUTPUT_PATH__=<path>` after saving. Return only Python code in a python fenced block."
@@ -171,10 +236,13 @@ OUTPUT_HTML:
 Implementation requirements:
 - Create a browser-ready web mapping application as an HTML file, not a static PNG.
 - Use folium when available; otherwise generate a standalone Leaflet HTML file from Python.
+- Leaflet/Folium requires vector coordinates in EPSG:4326. Use the dataset paths provided here; they are Leaflet-ready WGS84 copies when the original inputs used a projected CRS. If you load or transform vector data, call to_crs("EPSG:4326") before adding it to a web map.
 - Include an app-like layout when useful, such as a header, sidebar, summary cards, filters, search, charts, or tables.
 - Always include a real Leaflet/Folium layer control for all map layers and basemaps unless the user explicitly asks not to. Use folium.LayerControl(collapsed=False).add_to(m) or L.control.layers(..., {{collapsed:false}}).addTo(map). Sidebar checkboxes can be added, but they do not replace the map layer control.
 - Add a polished visible map title, not only the HTML <title>. It should be concise, professional, and based on the user's request and datasets unless the user explicitly asks not to.
 - If the map uses choropleth, graduated color, classified color, or any value-based symbology, include a clear compact legend explaining colors/classes/values unless the user explicitly asks not to. Put legends in a sidebar or bottom-right map control with max-width around 320px; do not create a long horizontal legend across the map.
+- Legend swatches must use valid CSS colors, for example #fdae61 or rgba(253,174,97,0.85). Do not use raw Python tuples from Matplotlib colormaps in CSS.
+- Keep narrative panels compact. Prefer a left sidebar no wider than about 360px, or a collapsible panel. Do not create a full-width top panel that covers a large part of the map.
 - Support multiple vector layers with layer controls and popups.
 - For raster inputs, include a reasonable approach if possible; otherwise document the limitation in code comments and still map available vector/tabular data.
 - Fit the map extent to the spatial data when possible.
@@ -209,6 +277,105 @@ Implementation requirements:
         if re.search(r"\blegend(s)?\b", query.lower()):
             return True
         return self._requires_choropleth_legend(query)
+
+    def _html_has_invalid_leaflet_bounds(self, html: str) -> bool:
+        """Detect common projected-coordinate mistakes in Leaflet fitBounds calls."""
+
+        def outside_leaflet_coordinate_range(values: list[float]) -> bool:
+            if len(values) < 2:
+                return False
+            return any(abs(value) > 180 for value in values)
+
+        for match in re.finditer(
+            r"fitBounds\s*\(\s*\[\s*\[\s*([-+]?\d+(?:\.\d+)?)\s*,\s*([-+]?\d+(?:\.\d+)?)\s*\]\s*,\s*\[\s*([-+]?\d+(?:\.\d+)?)\s*,\s*([-+]?\d+(?:\.\d+)?)\s*\]",
+            html,
+            flags=re.IGNORECASE,
+        ):
+            values = [float(value) for value in match.groups()]
+            lat1, lon1, lat2, lon2 = values
+            if abs(lat1) > 90 or abs(lat2) > 90 or abs(lon1) > 180 or abs(lon2) > 180:
+                return True
+
+        for match in re.finditer(
+            r"L\.latLngBounds\s*\(\s*L\.latLng\s*\(\s*([-+]?\d+(?:\.\d+)?)\s*,\s*([-+]?\d+(?:\.\d+)?)\s*\)\s*,\s*L\.latLng\s*\(\s*([-+]?\d+(?:\.\d+)?)\s*,\s*([-+]?\d+(?:\.\d+)?)\s*\)",
+            html,
+            flags=re.IGNORECASE,
+        ):
+            values = [float(value) for value in match.groups()]
+            if outside_leaflet_coordinate_range(values):
+                return True
+
+        for match in re.finditer(
+            r"(?:center|setView)\s*[:(]\s*\[\s*([-+]?\d+(?:\.\d+)?)\s*,\s*([-+]?\d+(?:\.\d+)?)\s*\]",
+            html,
+            flags=re.IGNORECASE,
+        ):
+            values = [float(value) for value in match.groups()]
+            lat, lon = values
+            if abs(lat) > 90 or abs(lon) > 180:
+                return True
+        return False
+
+    def _html_has_projected_geojson_coordinates(self, html: str) -> bool:
+        """Detect embedded GeoJSON coordinate pairs that are not longitude/latitude."""
+
+        if "coordinates" not in html.lower():
+            return False
+
+        coordinates_pattern = re.compile(
+            r"[\"']coordinates[\"']\s*:\s*(?:\[\s*)+([-+]?\d+(?:\.\d+)?)\s*,\s*([-+]?\d+(?:\.\d+)?)",
+            flags=re.IGNORECASE,
+        )
+        for match in coordinates_pattern.finditer(html):
+            x_value = float(match.group(1))
+            y_value = float(match.group(2))
+            if abs(x_value) > 180 or abs(y_value) > 90:
+                return True
+
+        return False
+
+    def _html_has_invalid_css_color_tuples(self, html: str) -> bool:
+        """Detect Python/Matplotlib RGBA tuples accidentally written as CSS colors."""
+
+        return bool(
+            re.search(
+                r"background(?:-color)?\s*:\s*\(\s*[-+]?\d+(?:\.\d+)?\s*,\s*[-+]?\d+(?:\.\d+)?\s*,\s*[-+]?\d+(?:\.\d+)?",
+                html,
+                flags=re.IGNORECASE,
+            )
+        )
+
+    def _repair_css_color_tuples(self, html: str) -> str:
+        """Convert CSS declarations like background:(0.5,0.2,0.1,1) to rgba(...)."""
+
+        color_tuple_pattern = re.compile(
+            r"(?P<property>background(?:-color)?\s*:\s*)\(\s*"
+            r"(?P<r>[-+]?\d+(?:\.\d+)?)\s*,\s*"
+            r"(?P<g>[-+]?\d+(?:\.\d+)?)\s*,\s*"
+            r"(?P<b>[-+]?\d+(?:\.\d+)?)"
+            r"(?:\s*,\s*(?P<a>[-+]?\d+(?:\.\d+)?))?\s*\)",
+            flags=re.IGNORECASE,
+        )
+
+        def clamp(value: float, lower: float, upper: float) -> float:
+            return max(lower, min(upper, value))
+
+        def replacement(match: re.Match[str]) -> str:
+            red = float(match.group("r"))
+            green = float(match.group("g"))
+            blue = float(match.group("b"))
+            alpha = float(match.group("a")) if match.group("a") is not None else 1.0
+
+            if max(abs(red), abs(green), abs(blue)) <= 1.0:
+                red, green, blue = red * 255, green * 255, blue * 255
+
+            red_i = int(round(clamp(red, 0, 255)))
+            green_i = int(round(clamp(green, 0, 255)))
+            blue_i = int(round(clamp(blue, 0, 255)))
+            alpha_value = clamp(alpha, 0, 1)
+            return f"{match.group('property')}rgba({red_i}, {green_i}, {blue_i}, {alpha_value:.3g})"
+
+        return color_tuple_pattern.sub(replacement, html)
 
     def _professional_title(self, query: str) -> str:
         words = re.findall(r"[A-Za-z0-9]+", query)
@@ -267,6 +434,21 @@ Implementation requirements:
         if self._requires_legend(query) and "legend" not in normalized:
             issues.append("The app must include a clear legend when requested or when using value-based symbology.")
 
+        if self._html_has_invalid_leaflet_bounds(html):
+            issues.append(
+                "The app appears to use projected coordinates in Leaflet bounds. Web map layers and bounds must be EPSG:4326 longitude/latitude."
+            )
+
+        if self._html_has_projected_geojson_coordinates(html):
+            issues.append(
+                "The app appears to embed projected GeoJSON coordinates. Leaflet/Folium vector data must be converted to EPSG:4326 longitude/latitude before rendering."
+            )
+
+        if self._html_has_invalid_css_color_tuples(html):
+            issues.append(
+                "The app legend appears to use Python/Matplotlib color tuples instead of valid CSS colors. Legend swatches must use hex, rgb(...), or rgba(...)."
+            )
+
         return not issues, issues
 
     def _postprocess_html_output(self, output_path: str) -> None:
@@ -275,8 +457,19 @@ Implementation requirements:
             return
 
         html = path.read_text(encoding="utf-8", errors="ignore")
-        if "gas-web-map-app-safety-styles" in html:
-            return
+        html = self._repair_css_color_tuples(html)
+        html = re.sub(
+            r"\s*<style\s+id=[\"']gas-web-map-app-safety-styles[\"'][^>]*>.*?</style>",
+            "",
+            html,
+            flags=re.IGNORECASE | re.DOTALL,
+        )
+        html = re.sub(
+            r"\s*<script\s+id=[\"']gas-web-map-app-safety-script[\"'][^>]*>.*?</script>",
+            "",
+            html,
+            flags=re.IGNORECASE | re.DOTALL,
+        )
 
         safety_css = """
 <style id="gas-web-map-app-safety-styles">
@@ -305,7 +498,8 @@ Implementation requirements:
     left: auto !important;
     top: auto !important;
     z-index: 10010 !important;
-    max-width: 340px !important;
+    width: min(340px, calc(100vw - 48px)) !important;
+    max-width: min(340px, calc(100vw - 48px)) !important;
     max-height: 36vh !important;
     overflow: auto !important;
     background: rgba(255, 255, 255, 0.97) !important;
@@ -317,12 +511,19 @@ Implementation requirements:
     color: #111827 !important;
   }
   .legend svg, .map-legend svg, .info.legend svg, .branca-colormap svg {
+    width: 100% !important;
     max-width: 300px !important;
     height: auto !important;
   }
   .legend img, .map-legend img, .info.legend img, .branca-colormap img {
     max-width: 300px !important;
     height: auto !important;
+  }
+  .legend text,
+  .map-legend text,
+  .info.legend text,
+  .branca-colormap text {
+    font-size: 10px !important;
   }
   #legend-container .legend,
   #legend-container .map-legend,
@@ -349,7 +550,8 @@ Implementation requirements:
       el.style.setProperty("left", "auto", "important");
       el.style.setProperty("top", "auto", "important");
       el.style.setProperty("z-index", "10010", "important");
-      el.style.setProperty("max-width", "340px", "important");
+      el.style.setProperty("width", "min(340px, calc(100vw - 48px))", "important");
+      el.style.setProperty("max-width", "min(340px, calc(100vw - 48px))", "important");
       el.style.setProperty("max-height", "36vh", "important");
       el.style.setProperty("overflow", "auto", "important");
       el.style.setProperty("background", "rgba(255,255,255,0.97)", "important");
@@ -371,11 +573,20 @@ Implementation requirements:
         const consumesViewport = rect.height >= window.innerHeight * 0.6;
         if (consumesViewport) {
           el.style.setProperty("position", "fixed", "important");
-          el.style.setProperty("inset", "0", "important");
+          el.style.setProperty("top", "12px", "important");
+          el.style.setProperty("left", "12px", "important");
+          el.style.setProperty("right", "12px", "important");
+          el.style.setProperty("bottom", "auto", "important");
           el.style.setProperty("height", "auto", "important");
-          el.style.setProperty("width", "100%", "important");
+          el.style.setProperty("max-height", "34vh", "important");
+          el.style.setProperty("width", "auto", "important");
+          el.style.setProperty("overflow", "auto", "important");
           el.style.setProperty("z-index", "900", "important");
-          el.style.setProperty("pointer-events", "none", "important");
+          el.style.setProperty("background", "rgba(255,255,255,0.94)", "important");
+          el.style.setProperty("border", "1px solid rgba(0,0,0,0.14)", "important");
+          el.style.setProperty("border-radius", "8px", "important");
+          el.style.setProperty("box-shadow", "0 4px 18px rgba(0,0,0,0.14)", "important");
+          el.style.setProperty("pointer-events", "auto", "important");
           el.querySelectorAll("#header, .header, #sidebar, .sidebar, .panel, button, input, select, a").forEach(function (child) {
             child.style.setProperty("pointer-events", "auto", "important");
           });
@@ -605,12 +816,15 @@ Implementation requirements:
             message=f"I am inspecting {len(dataset_paths)} dataset reference(s) to identify formats, CRS, geometry types, fields, and bounds.",
             data={"dataset_paths": dataset_paths},
         )
-        dataset_context = self._dataset_context(dataset_paths)
+        prepared_dataset_paths = self._prepare_leaflet_dataset_paths(dataset_paths, progress_callback=progress_callback)
+        dataset_context = self._dataset_context(prepared_dataset_paths)
         self._emit_progress(
             progress_callback,
             stage="layer_preparation",
-            message="Dataset inspection is complete. I have enough metadata to prepare the web mapping app generation prompt.",
+            message="Dataset inspection and Leaflet-ready input preparation are complete. I have enough metadata to prepare the web mapping app generation prompt.",
             data={
+                "original_dataset_paths": dataset_paths,
+                "prepared_dataset_paths": prepared_dataset_paths,
                 "dataset_context": [
                     {
                         "name": item.get("name"),
@@ -632,7 +846,7 @@ Implementation requirements:
             data={"output_path": output_path, "available_libraries": self.available_mapping_libraries},
         )
 
-        messages = self._build_prompt(query, dataset_paths, dataset_context, output_path)
+        messages = self._build_prompt(query, prepared_dataset_paths, dataset_context, output_path)
         if self.client is None:
             self.last_error = "No LLM client was configured; using deterministic fallback map."
             self._emit_progress(
@@ -735,7 +949,7 @@ Implementation requirements:
                 message="Generated code did not produce a valid HTML artifact, so I am creating a deterministic Leaflet web mapping app fallback.",
                 data={"output_path": output_path},
             )
-            success, mapped_layers = self._fallback_map(query, dataset_paths, output_path)
+            success, mapped_layers = self._fallback_map(query, prepared_dataset_paths, output_path)
             if success:
                 self._postprocess_html_output(output_path)
                 success, validation_issues = self._validate_html_output(query, output_path)
@@ -792,6 +1006,7 @@ Implementation requirements:
             "inputs": {
                 "text": query,
                 "dataset_paths": dataset_paths,
+                "prepared_dataset_paths": prepared_dataset_paths,
                 "parameters": {
                     "max_iterations": self.max_iterations,
                     "timeout_seconds": self.timeout_seconds,
@@ -817,7 +1032,12 @@ Implementation requirements:
             },
             "complementary": {
                 "Execution": {
-                    "Inputs": {"task": query, "dataset_paths": dataset_paths, "dataset_context": dataset_context},
+                    "Inputs": {
+                        "task": query,
+                        "dataset_paths": dataset_paths,
+                        "prepared_dataset_paths": prepared_dataset_paths,
+                        "dataset_context": dataset_context,
+                    },
                     "Outputs": {"summary": summary, "output_path": output_path, "mapped_layers": mapped_layers},
                 },
                 "Provenance": {

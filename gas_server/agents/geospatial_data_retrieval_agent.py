@@ -43,6 +43,7 @@ class GeospatialDataRetrievalAgent(GeoAgent):
     ]
     VECTOR_EXTENSIONS = {".geojson", ".gpkg", ".shp", ".gdb", ".kml", ".gml", ".json"}
     RASTER_EXTENSIONS = {".tif", ".tiff", ".img", ".vrt"}
+    TABLE_EXTENSIONS = {".csv"}
     SINGLE_FILE_EXTENSIONS = {".geojson", ".gml", ".gpkg", ".img", ".json", ".kml", ".tif", ".tiff", ".vrt"}
     SIDECAR_EXTENSIONS = {
         ".aux",
@@ -176,6 +177,7 @@ class GeospatialDataRetrievalAgent(GeoAgent):
                     dataset_size=dataset_size,
                     script=code,
                     downloaded_files=downloaded_files,
+                    progress_callback=progress_callback,
                 )
 
             handbook_str = self.collect_a_handbook(
@@ -246,6 +248,7 @@ class GeospatialDataRetrievalAgent(GeoAgent):
                     dataset_size=dataset_size,
                     script=code,
                     downloaded_files=downloaded_files,
+                    progress_callback=progress_callback,
                 )
 
             self._emit_progress(
@@ -308,6 +311,7 @@ class GeospatialDataRetrievalAgent(GeoAgent):
                     dataset_size=dataset_size,
                     script=code,
                     downloaded_files=[],
+                    progress_callback=progress_callback,
                 )
 
             downloaded_files = [
@@ -355,6 +359,7 @@ class GeospatialDataRetrievalAgent(GeoAgent):
                 dataset_size=dataset_size,
                 script=code,
                 downloaded_files=downloaded_files,
+                progress_callback=progress_callback,
             )
         except Exception as exc:
             logging.exception("Data retrieval failed.")
@@ -377,6 +382,7 @@ class GeospatialDataRetrievalAgent(GeoAgent):
                 dataset_size=dataset_size,
                 script=code,
                 downloaded_files=downloaded_files,
+                progress_callback=progress_callback,
             )
 
     def LLM_Find(self, data_request, dataset_path=None):
@@ -460,7 +466,7 @@ class GeospatialDataRetrievalAgent(GeoAgent):
             "The output filename must contain at most two words before the 6-digit suffix. Do not add extra words before the suffix.",
             "The final dataset path must be stored in the required output directory, not elsewhere.",
             "Use a single self-contained output artifact whenever possible.",
-            "For vector geospatial data, the default final output must be a single .gpkg GeoPackage file. If the user explicitly requests GeoJSON, save a single .geojson file instead.",
+            "For vector geospatial data, the default final output must be a single .gpkg GeoPackage file. If the user explicitly requests GeoJSON, save a single .geojson file instead. If the user explicitly requests CSV, save a single .csv file instead; include useful identifier and attribute fields, and include geometry as WKT only when geometry is needed.",
             "For raster data, keep the appropriate raster format.",
             "After downloading, filter or transform the dataset so the saved final file matches every user-requested geography, time period, attribute, and format constraint.",
             "If the source only provides a broader dataset, post-process it before saving. For example, contiguous or conterminous US county requests must exclude Alaska, Hawaii, Puerto Rico, and other territories.",
@@ -516,7 +522,7 @@ class GeospatialDataRetrievalAgent(GeoAgent):
             "If Overpass returns 504 timeout for a statewide POI request such as hospitals, narrow the query to exact tags like `amenity=hospital` and `healthcare=hospital`, use `out center tags;` or `out body center;`, and avoid `out geom;` unless full polygon geometry is required.",
             f"Keep the final saved output inside this directory only: {self.output_dir}",
             f"Use the exact output basename '{output_stem}' with the appropriate extension. Do not create extra final dataset files.",
-            "For vector geospatial data, the default final saved output must be a single .gpkg GeoPackage file. If the user explicitly requests GeoJSON, save a single .geojson file instead.",
+            "For vector geospatial data, the default final saved output must be a single .gpkg GeoPackage file. If the user explicitly requests GeoJSON, save a single .geojson file instead. If the user explicitly requests CSV, save a single .csv file instead; include useful identifier and attribute fields, and include geometry as WKT only when geometry is needed.",
         ]
                 
         etype, exc, tb = sys.exc_info()
@@ -794,11 +800,22 @@ class GeospatialDataRetrievalAgent(GeoAgent):
         if merged.empty:
             raise ValueError("Census county boundaries and population rows did not join on GEOID.")
 
-        output_path = os.path.join(self.output_dir, f"{output_stem}.gpkg")
-        merged.to_file(output_path, driver="GPKG")
+        filtered, _applied_rules = self.apply_vector_request_filters(merged, data_request)
+        if filtered is not None and not filtered.empty:
+            merged = filtered
+
+        if self.is_explicit_csv_request(data_request):
+            output_path = os.path.join(self.output_dir, f"{output_stem}.csv")
+            self.save_geodataframe_as_csv(merged, output_path)
+            output_label = "CSV"
+        else:
+            output_path = os.path.join(self.output_dir, f"{output_stem}.gpkg")
+            merged.to_file(output_path, driver="GPKG")
+            output_label = "GeoPackage"
+
         return {
             "path": output_path,
-            "script": self.direct_census_county_population_script(year, bool(census_key)),
+            "script": self.direct_census_county_population_script(year, bool(census_key), output_label),
         }
 
     def is_county_population_request(self, data_request):
@@ -807,13 +824,13 @@ class GeospatialDataRetrievalAgent(GeoAgent):
         population_terms = ("population", "total population", "people")
         return any(term in request for term in county_terms) and any(term in request for term in population_terms)
 
-    def direct_census_county_population_script(self, year, used_key):
+    def direct_census_county_population_script(self, year, used_key, output_label="GeoPackage"):
         key_note = "with a Census API key" if used_key else "without a Census API key"
         return (
             "# deterministic Census county population workflow\n"
             f"# Downloaded {year} county boundaries from Census GENZ shapefile.\n"
             f"# Downloaded ACS {year} B01001_001E county population {key_note}.\n"
-            "# Joined boundaries and population by GEOID, then saved GeoPackage.\n"
+            f"# Joined boundaries and population by GEOID, then saved {output_label}.\n"
         )
 
     def generate_download_summary(
@@ -1105,6 +1122,31 @@ class GeospatialDataRetrievalAgent(GeoAgent):
             return ".geojson", "GeoJSON", "GeoJSON"
         return ".gpkg", "GPKG", "GeoPackage"
 
+    def is_explicit_csv_request(self, data_request):
+        request = (data_request or "").lower()
+        if "csv" not in request and ".csv" not in request:
+            return False
+
+        format_terms = r"(save|saved|return|returned|output|export|write|written|deliver|delivered|generate|generated|create|created|download|downloaded)"
+        csv_terms = r"(\.csv|csv)"
+        before_pattern = rf"\b{format_terms}\b[\w\s,.;:'\"()/\\-]{{0,100}}\b{csv_terms}\b"
+        as_pattern = rf"\b(as|in|to|into)\s+(a\s+)?{csv_terms}(\s+(format|file|artifact|dataset))?\b"
+        after_pattern = rf"\b{csv_terms}\s+(format|file|output|artifact|delivery|dataset)\b"
+        return bool(
+            re.search(before_pattern, request)
+            or re.search(as_pattern, request)
+            or re.search(after_pattern, request)
+        )
+
+    def save_geodataframe_as_csv(self, gdf, target_path):
+        table = pd.DataFrame(gdf.copy())
+        geometry_column = getattr(gdf, "geometry", None)
+        geometry_name = getattr(geometry_column, "name", None)
+        if geometry_name and geometry_name in table.columns:
+            table["geometry_wkt"] = gdf.geometry.to_wkt()
+            table = table.drop(columns=[geometry_name])
+        table.to_csv(target_path, index=False)
+
     def is_explicit_geopackage_request(self, data_request):
         request = (data_request or "").lower()
         return bool(
@@ -1138,6 +1180,29 @@ class GeospatialDataRetrievalAgent(GeoAgent):
         ext = os.path.splitext(file_path)[1].lower()
         if ext not in self.VECTOR_EXTENSIONS:
             return file_path
+
+        if self.is_explicit_csv_request(data_request):
+            target_path = os.path.join(self.output_dir, f"{output_stem}.csv")
+            try:
+                gdf = gpd.read_file(file_path)
+                self.save_geodataframe_as_csv(gdf, target_path)
+                self._emit_progress(
+                    progress_callback,
+                    stage="normalization",
+                    message="I converted the vector output to CSV because the request explicitly asked for CSV.",
+                    data={"input_path": file_path, "output_path": target_path, "target_format": "CSV"},
+                )
+                return target_path
+            except Exception as exc:
+                warning_message = "I could not convert the vector output to CSV, so I will keep the original file."
+                logging.warning(f"Could not convert vector output '{file_path}' to CSV: {exc}")
+                self._emit_progress(
+                    progress_callback,
+                    stage="warning",
+                    message=warning_message,
+                    data={"path": file_path, "target_format": "CSV", "error": str(exc)},
+                )
+                return file_path
 
         preferred_ext, preferred_driver, preferred_label = self.preferred_vector_output(data_request)
         target_path = os.path.join(self.output_dir, f"{output_stem}{preferred_ext}")
@@ -1234,7 +1299,38 @@ class GeospatialDataRetrievalAgent(GeoAgent):
 
         filtered, applied_rules = self.apply_vector_request_filters(gdf, data_request)
         if filtered is None or filtered.empty or not applied_rules:
+            if self.is_explicit_csv_request(data_request):
+                target_path = os.path.join(self.output_dir, f"{output_stem}.csv")
+                self.save_geodataframe_as_csv(gdf, target_path)
+                self._emit_progress(
+                    progress_callback,
+                    stage="normalization",
+                    message="I saved the vector dataset as CSV because the request explicitly asked for CSV.",
+                    data={
+                        "selected_data_source": selected_data_source,
+                        "feature_count": int(len(gdf)),
+                        "output_path": target_path,
+                    },
+                )
+                return target_path
             return file_path
+
+        if self.is_explicit_csv_request(data_request):
+            target_path = os.path.join(self.output_dir, f"{output_stem}.csv")
+            self.save_geodataframe_as_csv(filtered, target_path)
+            self._emit_progress(
+                progress_callback,
+                stage="normalization",
+                message="I post-processed the downloaded vector data and saved the refined result as CSV.",
+                data={
+                    "selected_data_source": selected_data_source,
+                    "before_feature_count": int(len(gdf)),
+                    "after_feature_count": int(len(filtered)),
+                    "applied_rules": applied_rules,
+                    "output_path": target_path,
+                },
+            )
+            return target_path
 
         preferred_ext, preferred_driver, preferred_label = self.preferred_vector_output(data_request)
         target_path = os.path.join(self.output_dir, f"{output_stem}{preferred_ext}")
@@ -1593,6 +1689,339 @@ class GeospatialDataRetrievalAgent(GeoAgent):
 
         return self.empty_dataset_size()
 
+    def validation_check(self, name, status, message, **data):
+        return {"name": name, "status": status, "message": message, **data}
+
+    def validation_status(self, checks):
+        statuses = {check.get("status") for check in checks}
+        if "failed" in statuses:
+            return "failed"
+        if "warning" in statuses:
+            return "warning"
+        return "passed"
+
+    def self_validate_result(self, text_input, output_dataset_path, downloaded_files):
+        checks = []
+        artifacts = [path for path in downloaded_files if path]
+
+        if artifacts:
+            checks.append(
+                self.validation_check(
+                    "artifact_created",
+                    "passed",
+                    f"{len(artifacts)} artifact(s) were created.",
+                    artifact_count=len(artifacts),
+                )
+            )
+        else:
+            checks.append(self.validation_check("artifact_created", "failed", "No output artifact was created."))
+
+        if output_dataset_path:
+            checks.extend(self.validate_single_artifact(text_input, output_dataset_path))
+        elif artifacts:
+            checks.extend(self.validate_single_artifact(text_input, artifacts[0]))
+        else:
+            checks.append(self.validation_check("primary_artifact", "failed", "No primary output artifact was selected."))
+
+        return {
+            "status": self.validation_status(checks),
+            "checks": checks,
+        }
+
+    def validate_single_artifact(self, text_input, path):
+        checks = []
+        extension = os.path.splitext(path or "")[1].lower()
+
+        if not path or not os.path.exists(path):
+            return [self.validation_check("file_exists", "failed", "The selected output file does not exist.", path=path)]
+
+        checks.append(self.validation_check("file_exists", "passed", "The selected output file exists.", path=path))
+
+        try:
+            size_bytes = os.path.getsize(path)
+        except OSError as exc:
+            size_bytes = 0
+            checks.append(self.validation_check("file_size", "failed", f"Could not read output file size: {exc}", path=path))
+        else:
+            if size_bytes > 0:
+                checks.append(
+                    self.validation_check(
+                        "file_size",
+                        "passed",
+                        f"Output file is non-empty ({size_bytes:,} bytes).",
+                        size_bytes=size_bytes,
+                    )
+                )
+            else:
+                checks.append(self.validation_check("file_size", "failed", "Output file is empty.", path=path))
+
+        checks.append(self.validate_requested_format(text_input, extension, path))
+
+        if extension in self.VECTOR_EXTENSIONS:
+            checks.extend(self.validate_vector_artifact(text_input, path))
+        elif extension in self.RASTER_EXTENSIONS:
+            checks.extend(self.validate_raster_artifact(path))
+        elif extension in self.TABLE_EXTENSIONS:
+            checks.extend(self.validate_table_artifact(text_input, path))
+        else:
+            checks.append(
+                self.validation_check(
+                    "artifact_readability",
+                    "warning",
+                    f"No built-in readability check is available for '{extension or 'unknown'}' files.",
+                )
+            )
+
+        return checks
+
+    def validate_requested_format(self, text_input, extension, path):
+        if self.is_explicit_csv_request(text_input):
+            expected = ".csv"
+            label = "CSV"
+        elif self.is_explicit_geojson_request(text_input):
+            expected = ".geojson"
+            label = "GeoJSON"
+        elif self.is_explicit_geopackage_request(text_input):
+            expected = ".gpkg"
+            label = "GeoPackage"
+        else:
+            return self.validation_check(
+                "requested_format",
+                "passed",
+                "No explicit output format was requested; the agent default format policy applies.",
+                actual_extension=extension,
+            )
+
+        status = "passed" if extension == expected else "failed"
+        message = (
+            f"Output format matches the explicit {label} request."
+            if status == "passed"
+            else f"Output format does not match the explicit {label} request."
+        )
+        return self.validation_check(
+            "requested_format",
+            status,
+            message,
+            expected_extension=expected,
+            actual_extension=extension,
+            path=path,
+        )
+
+    def validate_vector_artifact(self, text_input, path):
+        checks = []
+        try:
+            gdf = gpd.read_file(path)
+        except Exception as exc:
+            return [self.validation_check("artifact_readability", "failed", f"Vector artifact is not readable: {exc}")]
+
+        checks.append(
+            self.validation_check(
+                "artifact_readability",
+                "passed",
+                "Vector artifact is readable with GeoPandas.",
+            )
+        )
+        checks.extend(self.validate_dataframe_content(text_input, gdf, geometry_expected=True))
+        return checks
+
+    def validate_table_artifact(self, text_input, path):
+        checks = []
+        try:
+            df = pd.read_csv(path)
+        except Exception as exc:
+            return [self.validation_check("artifact_readability", "failed", f"CSV artifact is not readable: {exc}")]
+
+        checks.append(self.validation_check("artifact_readability", "passed", "CSV artifact is readable with pandas."))
+        checks.extend(self.validate_dataframe_content(text_input, df, geometry_expected=False))
+        return checks
+
+    def validate_raster_artifact(self, path):
+        try:
+            import rasterio
+
+            with rasterio.open(path) as src:
+                width = src.width
+                height = src.height
+                band_count = src.count
+        except Exception as exc:
+            return [self.validation_check("artifact_readability", "failed", f"Raster artifact is not readable: {exc}")]
+
+        status = "passed" if width > 0 and height > 0 and band_count > 0 else "failed"
+        return [
+            self.validation_check(
+                "artifact_readability",
+                "passed",
+                "Raster artifact is readable with Rasterio.",
+                width=width,
+                height=height,
+                band_count=band_count,
+            ),
+            self.validation_check(
+                "raster_dimensions",
+                status,
+                "Raster has positive width, height, and band count." if status == "passed" else "Raster dimensions are invalid.",
+                width=width,
+                height=height,
+                band_count=band_count,
+            ),
+        ]
+
+    def validate_dataframe_content(self, text_input, df, geometry_expected):
+        checks = []
+        row_count = int(len(df))
+        if row_count:
+            checks.append(self.validation_check("record_count", "passed", f"Artifact contains {row_count:,} record(s).", record_count=row_count))
+        else:
+            checks.append(self.validation_check("record_count", "failed", "Artifact contains no records.", record_count=0))
+
+        column_names = [str(column) for column in df.columns]
+        if column_names:
+            checks.append(
+                self.validation_check(
+                    "schema_present",
+                    "passed",
+                    f"Artifact contains {len(column_names)} column(s).",
+                    columns=column_names,
+                )
+            )
+        else:
+            checks.append(self.validation_check("schema_present", "failed", "Artifact has no columns."))
+
+        checks.extend(self.validate_requested_years(text_input, df))
+        checks.extend(self.validate_requested_states(text_input, df))
+        checks.extend(self.validate_contiguous_us_constraint(text_input, df))
+
+        if geometry_expected and hasattr(df, "geometry"):
+            try:
+                null_geometry_count = int(df.geometry.isna().sum())
+            except Exception:
+                null_geometry_count = 0
+            status = "warning" if null_geometry_count else "passed"
+            message = (
+                f"{null_geometry_count} record(s) have missing geometry."
+                if null_geometry_count
+                else "All vector records have geometry."
+            )
+            checks.append(self.validation_check("geometry_presence", status, message, null_geometry_count=null_geometry_count))
+
+        return checks
+
+    def validate_requested_years(self, text_input, df):
+        years = self.extract_requested_years(text_input)
+        if not years:
+            return []
+
+        year_column = self.find_first_column(df, ("year", "YEAR", "Year"))
+        if not year_column:
+            return [
+                self.validation_check(
+                    "requested_year",
+                    "warning",
+                    "A year was requested, but no obvious year column was found for validation.",
+                    requested_years=years,
+                )
+            ]
+
+        observed_years = sorted({str(value) for value in df[year_column].dropna().astype(str)})
+        missing_years = [year for year in years if year not in observed_years]
+        status = "failed" if missing_years else "passed"
+        message = (
+            "All requested years are present in the output."
+            if status == "passed"
+            else "One or more requested years are missing from the output."
+        )
+        return [
+            self.validation_check(
+                "requested_year",
+                status,
+                message,
+                requested_years=years,
+                observed_years=observed_years,
+                missing_years=missing_years,
+            )
+        ]
+
+    def validate_requested_states(self, text_input, df):
+        requested_states = self.extract_requested_us_states(text_input)
+        if not requested_states:
+            return []
+
+        state_column = self.find_first_column(
+            df,
+            ("STATEFP", "state_fips", "STATE", "state", "STUSPS", "state_abbr", "state_name", "NAME"),
+        )
+        if not state_column:
+            return [
+                self.validation_check(
+                    "requested_state",
+                    "warning",
+                    "A state was requested, but no obvious state column was found for validation.",
+                    requested_states=requested_states,
+                )
+            ]
+
+        observed = {str(value).strip().lower() for value in df[state_column].dropna().astype(str)}
+        missing = []
+        for state in requested_states:
+            values = {state["name"].lower(), state["abbr"].lower(), state["fips"].lower()}
+            if not (observed & values):
+                missing.append(state["abbr"])
+
+        status = "failed" if missing else "passed"
+        message = (
+            "Requested state filter appears to be represented in the output."
+            if status == "passed"
+            else "One or more requested states were not found in the output."
+        )
+        return [
+            self.validation_check(
+                "requested_state",
+                status,
+                message,
+                requested_states=[state["abbr"] for state in requested_states],
+                missing_states=missing,
+                validated_column=str(state_column),
+            )
+        ]
+
+    def validate_contiguous_us_constraint(self, text_input, df):
+        if not self.is_contiguous_us_request(text_input):
+            return []
+
+        state_column = self.find_first_column(df, ("STATEFP", "state_fips", "STATE", "state"))
+        if not state_column:
+            return [
+                self.validation_check(
+                    "contiguous_us_filter",
+                    "warning",
+                    "Contiguous US was requested, but no state FIPS column was found for validation.",
+                )
+            ]
+
+        excluded_fips = {"02", "15", "60", "66", "69", "72", "78"}
+        observed_excluded = sorted(
+            {
+                str(value).strip().zfill(2)
+                for value in df[state_column].dropna()
+                if str(value).strip().zfill(2) in excluded_fips
+            }
+        )
+        status = "failed" if observed_excluded else "passed"
+        message = (
+            "Excluded non-contiguous states and territories were not found in the output."
+            if status == "passed"
+            else "The output still contains non-contiguous state or territory FIPS codes."
+        )
+        return [
+            self.validation_check(
+                "contiguous_us_filter",
+                status,
+                message,
+                excluded_fips_present=observed_excluded,
+                validated_column=str(state_column),
+            )
+        ]
+
     def build_response(
         self,
         start_time,
@@ -1603,8 +2032,16 @@ class GeospatialDataRetrievalAgent(GeoAgent):
         dataset_size,
         script,
         downloaded_files,
+        progress_callback=None,
     ):
         persisted_artifacts = [path for path in downloaded_files if path]
+        validation = self.self_validate_result(text_input, output_dataset_path, persisted_artifacts)
+        self._emit_progress(
+            progress_callback,
+            stage="data_validation",
+            message=f"I validated the output artifact before returning it. Validation status: {validation['status']}.",
+            data=validation,
+        )
         outputs = {
             "text": output_text,
             "dataset_path": output_dataset_path,
@@ -1661,6 +2098,7 @@ class GeospatialDataRetrievalAgent(GeoAgent):
                     },
                     "Persisted Artifacts": persisted_artifacts,
                 },
+                "Validation": validation,
             },
         }
     

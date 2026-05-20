@@ -136,8 +136,8 @@
       "description": "Returns the exact Python script used for download execution in the execution.code.script field, along with environment details and selected data source."
     },
     "validation": {
-      "supported": false,
-      "description": "Agent checks code execution success but does not validate the quality or completeness of downloaded data."
+      "supported": true,
+      "description": "Performs agent-level self-validation before returning results, including artifact existence, requested output format, readartifact is readable with the right library such as GeoPandas, pandas, or Rasterio, output has records, schema, or raster dimensions, non-empty records or dimensions, and simple request-aware checks such as year, requested US state, and contiguous-US filtering when those fields are available."
     }
   },
   "governance": {
@@ -145,7 +145,7 @@
       "description": "Allowed roles set to ['all'] via the extension profile. No role-based access control is enforced."
     },
     "operation_policy": {
-      "description": "Python code execution with up to 10 retry attempts. Vector output is normalized to GeoPackage by default unless another supported format is explicitly requested. Data sources are selected based on technical handbooks."
+      "description": "Python code execution with up to 10 retry attempts. Vector output is normalized to GeoPackage by default unless another supported format is explicitly requested. Data sources are selected based on technical handbooks. Returned artifacts are self-validated and validation results are included in diagnostics.validation."
     },
     "review_policy": {
       "description": "output_review_required is set to false. No human-in-the-loop validation is required."

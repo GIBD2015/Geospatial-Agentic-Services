@@ -490,6 +490,105 @@ def clip_raster_with_vector(raster_obj, vector_gdf, key="clipped_raster", crop=T
             "supports_vector": gpd is not None
         }
 
+    def _raster_output_requested(self, task: str) -> bool:
+        request = (task or "").lower()
+        raster_terms = (
+            "raster",
+            "rasterize",
+            "geotiff",
+            "geo tiff",
+            ".tif",
+            ".tiff",
+            "pixel",
+            "cell size",
+            "dem",
+            "elevation",
+        )
+        return any(term in request for term in raster_terms)
+
+    def _failure_response(
+        self,
+        *,
+        user_query: str,
+        dataset_path: List[str],
+        start_time: float,
+        message: str,
+        script: str = "",
+        output_dataset_paths: Optional[List[str]] = None,
+        output_dataset_size: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
+        output_dataset_paths = output_dataset_paths or []
+        output_dataset_path = output_dataset_paths[0] if output_dataset_paths else None
+        output_dataset_size = output_dataset_size or {
+            "type": None,
+            "dimensions": None,
+            "feature_count": None,
+        }
+        duration_sec = time.time() - start_time
+        return {
+            "agent_name": self.agent_name,
+            "agent_version": self.agent_version,
+            "model": self.model,
+            "duration": f"{duration_sec:.2f}s",
+            "total_input_tokens": self.input_tokens,
+            "total_output_tokens": self.output_tokens,
+            "inputs": {
+                "text": user_query,
+                "dataset_path": dataset_path,
+            },
+            "outputs": {
+                "text": f"Status: failed. Error: {message}",
+                "dataset_path": output_dataset_path,
+                "dataset_paths": output_dataset_paths,
+                "dataset_size": output_dataset_size,
+            },
+            "metrics": {
+                "llm_calls": self.llm_calls,
+                "tool_calls": self.code_executions,
+                "number_of_artifacts": len(output_dataset_paths),
+            },
+            "environment": self._environment_info(),
+            "script": script,
+            "complementary": {
+                "Execution": {
+                    "Inputs": {
+                        "text": user_query,
+                        "dataset_path": dataset_path,
+                    },
+                    "Outputs": {
+                        "dataset_path": output_dataset_path,
+                        "dataset_paths": output_dataset_paths,
+                        "dataset_size": output_dataset_size,
+                    },
+                },
+                "Provenance": {
+                    "Lineage": {},
+                    "Tool Calls": {
+                        "execute_script_count": self.code_executions,
+                        "register_final_artifact_count": len(
+                            self.final_artifact_keys or ([self.final_artifact_key] if self.final_artifact_key else [])
+                        ),
+                    },
+                    "LLM Calls": {
+                        "total": self.llm_calls,
+                    },
+                },
+                "Artifacts and Logs": {
+                    "Inline Artifacts": {},
+                    "Persisted Artifacts": {
+                        "final_artifact_keys": self.final_artifact_keys or ([self.final_artifact_key] if self.final_artifact_key else []),
+                        "paths": output_dataset_paths,
+                        "items": [],
+                    },
+                },
+                "Assumptions and Limitations": {
+                    "warnings": [message],
+                    "limitations": [],
+                    "assumptions": [],
+                },
+            },
+        }
+
     def _generate_filename(self, task: str) -> str:
         return build_output_filename(
             task,
@@ -967,6 +1066,25 @@ def clip_raster_with_vector(raster_obj, vector_gdf, key="clipped_raster", crop=T
         for index, path in enumerate(dataset_path):
             self.registry[f"input_{index}_path"] = path
 
+        if self._raster_output_requested(user_query) and rasterio is None:
+            message = (
+                "rasterio is required for raster output generation in this runtime. "
+                "Install rasterio in the GAS server environment, then restart the server."
+            )
+            self.runtime_memory["errors"].append({"stage": "dependency_check", "error": message})
+            self._emit_progress(
+                progress_callback,
+                stage="error",
+                message=message,
+                data={"missing_dependency": "rasterio"},
+            )
+            return self._failure_response(
+                user_query=user_query,
+                dataset_path=dataset_path,
+                start_time=start_time,
+                message=message,
+            )
+
         self.runtime_memory["plan_status"] = "Starting task. Identifying initial loading steps."
         final_text_response = ""
 
@@ -1227,7 +1345,21 @@ def clip_raster_with_vector(raster_obj, vector_gdf, key="clipped_raster", crop=T
             stage="artifact_generation",
             message="I am saving the registered raster/vector result and collecting its output metadata.",
         )
-        output_dataset_paths, output_dataset_size, saved_artifacts = self._save_result(user_query)
+        try:
+            output_dataset_paths, output_dataset_size, saved_artifacts = self._save_result(user_query)
+        except Exception as e:
+            self.runtime_memory["errors"].append({"stage": "save_result", "error": str(e)})
+            self._emit_progress(
+                progress_callback,
+                stage="error",
+                message=f"I could not save the registered final artifact: {e}",
+            )
+            return self._failure_response(
+                user_query=user_query,
+                dataset_path=dataset_path,
+                start_time=start_time,
+                message=str(e),
+            )
         output_dataset_path = output_dataset_paths[0] if output_dataset_paths else None
         duration_sec = time.time() - start_time
 

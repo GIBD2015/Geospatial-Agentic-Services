@@ -899,10 +899,11 @@ class MappingAgent(GeoAgent):
         return str(path).lower().split("?")[0].endswith((".tif", ".tiff", ".img", ".vrt", ".asc"))
 
     def _should_try_fast_renderer(self, task: str, dataset_paths: List[str]) -> bool:
-        """Use deterministic rendering for common static map/chart requests.
+        """Use deterministic rendering only when the caller explicitly asks for it.
 
-        The LLM path remains available for complex cartography, mixed raster
-        workflows, or callers that explicitly set parameters.force_llm=true.
+        The default mapping path should stay LLM-backed because it usually
+        produces more polished cartographic layouts. The deterministic renderer
+        remains useful for quick previews, tests, and fallback behavior.
         """
         if self.request_parameters.get("force_llm") is True:
             return False
@@ -912,6 +913,31 @@ class MappingAgent(GeoAgent):
             return False
 
         task_lower = (task or "").lower()
+        explicit_parameter_request = any(
+            self.request_parameters.get(key) is True
+            for key in ("quick_mapping", "quick_map", "deterministic", "force_deterministic")
+        )
+        renderer_request = str(
+            self.request_parameters.get("renderer")
+            or self.request_parameters.get("mapping_mode")
+            or ""
+        ).lower() in {"quick", "quick_mapping", "quick_map", "deterministic", "fast", "fast_renderer"}
+        explicit_text_request = any(
+            term in task_lower
+            for term in (
+                "quick map",
+                "quick mapping",
+                "quick visualization",
+                "deterministic map",
+                "deterministic mapping",
+                "deterministic workflow",
+                "built-in renderer",
+                "fast renderer",
+            )
+        )
+        if not (explicit_parameter_request or renderer_request or explicit_text_request):
+            return False
+
         complex_terms = (
             "raster",
             "overlay",
@@ -971,8 +997,8 @@ class MappingAgent(GeoAgent):
             progress_callback,
             stage="method_selection",
             message=(
-                "I detected a straightforward static visualization request, so I will try the "
-                "built-in renderer before using an LLM code-generation loop."
+                "The request asked for quick or deterministic mapping, so I will use the "
+                "built-in renderer instead of the default LLM cartography workflow."
             ),
             data={"renderer": "deterministic", "dataset_count": len(dataset_paths)},
         )

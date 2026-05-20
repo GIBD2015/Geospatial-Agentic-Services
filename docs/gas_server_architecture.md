@@ -17,6 +17,73 @@ Intelligence](https://www.researchgate.net/publication/404738967_Geospatial_Agen
 Readers who want the broader motivation, terminology, and interoperability
 model should refer to that paper alongside this developer documentation.
 
+## Architecture Diagram
+
+The diagram below shows how the codebase is organized around service
+discovery, the shared GAS server framework, plugin-style agent publication, and
+standard task responses.
+
+```mermaid
+flowchart TB
+  subgraph Consumers["Service Consumers"]
+    Browser["Browser applications"]
+    Notebook["Python notebooks<br/>GAS Client SDK"]
+    Orchestrator["AI orchestrators<br/>workflow platforms"]
+  end
+
+  Consumers -->|"HTTP JSON requests<br/>streaming events"| Entry["GAS server entry point<br/>gas_server/entrypoints/gas_server.py"]
+
+  Entry --> Capabilities["GetCapabilities<br/>gas_server/capabilities/capabilities.json"]
+  Entry --> Describe["DescribeAgent<br/>gas_server/capabilities/*_agent.json"]
+  Entry --> Router["Agent route dispatcher<br/>/agents/{agent_id}/..."]
+
+  subgraph Core["Shared GAS Server Framework<br/>gas_server/core/"]
+    Registry["Service registry<br/>service_registry.py"]
+    Publisher["Service publisher<br/>service_publisher.py"]
+    ServiceCore["Service core<br/>request parsing, tasks, streaming,<br/>artifact delivery, response normalization"]
+    GeoAgent["GeoAgent base class<br/>geo_agent.py"]
+    Schemas["JSON schemas<br/>gas_server/schemas/"]
+  end
+
+  Router --> Registry
+  Registry --> Publisher
+  Publisher --> ServiceCore
+  ServiceCore --> GeoAgent
+  ServiceCore -.->|"documents and validates"| Schemas
+
+  subgraph Services["Published Agent Services<br/>gas_server/services/"]
+    ServiceWrappers["Small service wrappers<br/>register one GeoAgent subclass"]
+  end
+
+  Publisher --> ServiceWrappers
+
+  subgraph Agents["Agent Implementations<br/>gas_server/agents/"]
+    Retrieval["Geospatial Data Retrieval Agent"]
+    Inspection["Geospatial Data Inspection Agent"]
+    Projection["Map Projection Agent"]
+    Raster["Raster Agent"]
+    Vector["Vector Analysis Agent"]
+    Mapping["Mapping and Web Mapping App Agents"]
+    SpatialStats["Spatial Statistics Agent"]
+    PASDA["PASDA Agent"]
+  end
+
+  ServiceWrappers --> Agents
+
+  Agents -->|"generated artifacts"| Data["Runtime artifacts<br/>Data/{agent_id}/"]
+  Agents -->|"optional working outputs"| Output["Output workspace<br/>Output/"]
+
+  Response["Standard task response<br/>response, task, agent, outputs,<br/>execution, provenance, reproducibility,<br/>diagnostics"]
+  Interfaces["Interoperability interfaces<br/>Capabilities, DescribeAgent,<br/>JSON schemas, task response"]
+  ServiceCore --> Response
+  Capabilities --> Interfaces
+  Describe --> Interfaces
+  Schemas --> Interfaces
+  Response --> Interfaces
+  ServiceCore -->|"artifact URLs or encoded artifacts"| Consumers
+  Response --> Consumers
+```
+
 ## Service-Oriented Architecture
 
 The GAS server follows a service-oriented architecture (SOA). Each geospatial

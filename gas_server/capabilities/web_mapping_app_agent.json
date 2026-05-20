@@ -3,10 +3,10 @@
   "profile": {
     "agent_id": "web_mapping_app_agent",
     "name": "Web Mapping App Agent",
-    "description": "This agent develops browser-ready web mapping applications from one or more vector, raster, or tabular geospatial datasets. It uses an LLM to interpret user instructions, inspect input data, select suitable web mapping libraries and app UI patterns, generate executable Python/HTML/JavaScript code, and return the final result as an HTML application file.",
+    "description": "This agent develops browser-ready web mapping applications from one or more vector, raster, or tabular geospatial datasets. It uses an LLM to interpret user instructions, inspect input data, select suitable web mapping libraries and app UI patterns, generate executable Python/HTML/JavaScript code, self-check and repair common HTML web-map issues, and return the final result as an HTML application file.",
     "version": "1.0.0",
     "base_url": "https://www.geospatial-agentic-services.online/agents/web_mapping_app_agent",
-    "last_updated": "2026-05-16",
+    "last_updated": "2026-05-20",
     "provider": {
       "name": "Geoinformation and Big Data Research Lab (GIBD)",
       "website": "https://giscience.psu.edu",
@@ -45,10 +45,12 @@
         "other": [
           "The primary output is an HTML file.",
           "The generated app can include maps, layer controls, legends, popups, side panels, filters, summary sections, linked tables, charts, and other lightweight browser UI elements when useful.",
+          "Vector inputs are prepared as Leaflet-ready EPSG:4326 GeoJSON copies when needed, because browser web mapping libraries expect longitude/latitude coordinates.",
           "A real Leaflet/Folium layer control is required by default; sidebar checkboxes may supplement it but should not replace it.",
           "Legends should be compact and placed in a sidebar or bottom-right control area rather than stretched horizontally across the map.",
           "The agent does not download external datasets during app generation.",
-          "Generated code is executed with a timeout and retried before a deterministic fallback is used.",
+          "Generated code is executed with a timeout, post-processed, validated, and retried before a deterministic fallback is used.",
+          "The agent self-checks common HTML web-map failures before returning the artifact, including missing layer controls, missing titles, missing required legends, invalid CSS legend colors, projected Leaflet bounds, and projected embedded GeoJSON coordinates.",
           "Large vector datasets may produce large HTML artifacts."
         ]
       }
@@ -74,7 +76,7 @@
     "inputs": {
       "input_datasets": {
         "required": true,
-        "description": "Required array of input datasets. Each item may be an HTTP/HTTPS URL, a server-accessible path, or a base64-encoded file object with filename, data, and optional mime_type.",
+        "description": "Required array of input datasets. Each item may be an HTTP/HTTPS URL, a server-accessible path, or a base64-encoded file object with filename, data, and optional mime_type. Vector datasets may be in projected or geographic CRS; the agent prepares Leaflet-ready EPSG:4326 copies for web mapping when possible.",
         "supported_item_types": [
           "URL",
           "server_path",
@@ -99,7 +101,7 @@
             "HTML"
           ],
           "required": true,
-          "description": "Browser-ready HTML web mapping application with map layers, a real Leaflet/Folium layer control, title, and user-requested app behavior such as popups, compact legends, filters, side panels, charts, or tables when appropriate."
+          "description": "Browser-ready HTML web mapping application with map layers, a real Leaflet/Folium layer control, title, and user-requested app behavior such as popups, compact legends, filters, side panels, charts, or tables when appropriate. The HTML is post-processed and validated for common web-map rendering issues before it is returned."
         }
       ]
     },
@@ -142,7 +144,7 @@
     },
     "validation": {
       "supported": true,
-      "description": "Validates that the HTML output exists and checks required web mapping app elements such as map container, real Leaflet/Folium layer control, visible title, and requested or value-based legends when applicable. The agent also injects safety styles to keep common layer controls and legends visible and compact."
+      "description": "Validates that the HTML output exists and checks required web mapping app elements such as map container, real Leaflet/Folium layer control, visible title, and requested or value-based legends when applicable. The agent also checks for projected-coordinate mistakes in Leaflet bounds, projected embedded GeoJSON coordinates, and invalid CSS legend colors such as raw Python/Matplotlib RGBA tuples. The post-processing step repairs common legend color tuple mistakes and injects safety styles/scripts to keep layer controls, legends, and large app panels visible and compact."
     }
   },
   "governance": {
@@ -150,14 +152,14 @@
       "description": "Allowed roles set to ['all'] via the extension profile. No role-based access control is enforced."
     },
     "operation_policy": {
-      "description": "Generated Python code executes with a timeout and retry limit. The agent must use only provided datasets and should not download external datasets during web app generation."
+      "description": "Generated Python code executes with a timeout and retry limit. The agent must use only provided datasets and should not download external datasets during web app generation. Vector inputs are prepared for Leaflet/Folium by converting to EPSG:4326 when possible before code generation. Generated HTML is post-processed and self-validated before the artifact is returned."
     },
     "review_policy": {
-      "description": "output_review_required is set to false. The agent performs automated HTML/map-app element validation but no human-in-the-loop validation is required."
+      "description": "output_review_required is set to false. The agent performs automated HTML/map-app element validation and repairs selected common rendering issues, but no human-in-the-loop validation is required."
     },
     "policy_notes": "Web mapping app outputs should be reviewed by users for cartographic accuracy, classification suitability, data interpretation, accessibility, and publication readiness."
   },
   "extensions": {
-    "description": "This agent uses LLM-guided Python code generation plus Leaflet/Folium-style web mapping patterns to create HTML web mapping apps with basemaps, popups, layer controls, titles, legends, side panels, filters, summary sections, and managed downloadable artifacts."
+    "description": "This agent uses LLM-guided Python code generation plus Leaflet/Folium-style web mapping patterns to create HTML web mapping apps with basemaps, popups, layer controls, titles, legends, side panels, filters, summary sections, and managed downloadable artifacts. For browser compatibility, vector layers are prepared as EPSG:4326 GeoJSON when possible before they are passed to the generated Leaflet/Folium workflow. The generated HTML is self-checked for common web-map rendering problems and post-processed to repair selected issues such as invalid legend color tuples and oversized control/panel layouts."
   }
 }
