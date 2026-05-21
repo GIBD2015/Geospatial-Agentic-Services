@@ -529,8 +529,41 @@ def list_registry():
         if not dataset_paths:
             return None
 
-        common_terms = ("join", "merge", "buffer", "clip", "intersect", "intersection", "spatial join")
-        if not any(term in request for term in common_terms):
+        common_terms = (
+            "join",
+            "merge",
+            "buffer",
+            "clip",
+            "intersect",
+            "intersection",
+            "spatial join",
+            "count",
+            "counts",
+            "number of",
+            "how many",
+            "dissolve",
+            "aggregate",
+            "group by",
+            "area",
+            "length",
+            "centroid",
+            "nearest",
+            "closest",
+            "distance to",
+            "filter",
+            "select",
+            "where",
+            "convert",
+            "export",
+            "save as",
+            "format conversion",
+            "repair",
+            "fix",
+            "make valid",
+            "valid geometry",
+            "geometry validation",
+        )
+        if not self._has_any_term(request, common_terms):
             return None
 
         self._emit_progress(
@@ -543,20 +576,308 @@ def list_registry():
         geo_datasets = [item for item in datasets if item["is_geo"]]
         table_datasets = [item for item in datasets if not item["is_geo"]]
 
-        if any(term in request for term in ("join", "merge")) and len(datasets) >= 2:
+        if self._has_any_term(request, ("convert", "export", "save as", "format conversion")) and datasets:
+            result = self._try_format_conversion(query, datasets[0], start_time, progress_callback)
+            if result:
+                return result
+
+        if self._has_any_term(request, ("repair", "fix", "make valid", "valid geometry", "geometry validation")) and geo_datasets:
+            result = self._try_geometry_repair(query, geo_datasets[0], start_time, progress_callback)
+            if result:
+                return result
+
+        if self._has_any_term(request, ("area", "length", "centroid")) and geo_datasets:
+            result = self._try_add_geometry_measurements(query, geo_datasets[0], start_time, progress_callback)
+            if result:
+                return result
+
+        if self._has_any_term(request, ("dissolve", "aggregate", "group by")) and geo_datasets:
+            result = self._try_dissolve(query, geo_datasets[0], start_time, progress_callback)
+            if result:
+                return result
+
+        if self._has_any_term(request, ("nearest", "closest", "distance to")) and len(geo_datasets) >= 2:
+            result = self._try_nearest_distance(query, geo_datasets, start_time, progress_callback)
+            if result:
+                return result
+
+        if self._has_any_term(request, ("filter", "select", "where")) and datasets:
+            result = self._try_attribute_filter(query, datasets[0], start_time, progress_callback)
+            if result:
+                return result
+
+        if self._has_any_term(request, ("count", "counts", "number of", "how many")) and len(geo_datasets) >= 2:
+            result = self._try_point_counts_by_polygon(query, geo_datasets, start_time, progress_callback)
+            if result:
+                return result
+
+        if self._has_any_term(request, ("join", "merge")) and len(datasets) >= 2:
             result = self._try_attribute_join(query, datasets, geo_datasets, table_datasets, start_time, progress_callback)
             if result:
                 return result
             if "spatial" in request and len(geo_datasets) >= 2:
                 return self._try_spatial_join(query, geo_datasets, start_time, progress_callback)
 
-        if "buffer" in request and geo_datasets:
+        if self._has_any_term(request, ("buffer",)) and geo_datasets:
             return self._try_buffer(query, geo_datasets[0], start_time, progress_callback)
 
-        if any(term in request for term in ("clip", "intersect", "intersection")) and len(geo_datasets) >= 2:
+        if self._has_any_term(request, ("clip", "intersect", "intersection")) and len(geo_datasets) >= 2:
             return self._try_overlay(query, geo_datasets, start_time, progress_callback)
 
         return None
+
+    def _has_any_term(self, request: str, terms: Tuple[str, ...]) -> bool:
+        for term in terms:
+            escaped = re.escape(term.lower())
+            if re.search(rf"\b{escaped}\b", request):
+                return True
+        return False
+
+    def _numeric_work_crs(self, gdf: gpd.GeoDataFrame):
+        if gdf.crs is None:
+            return "EPSG:3857"
+        try:
+            if gdf.crs.is_projected:
+                return gdf.crs
+        except Exception:
+            pass
+        try:
+            return gdf.estimate_utm_crs() or "EPSG:3857"
+        except Exception:
+            return "EPSG:3857"
+
+    def _query_column(self, query: str, columns: List[str]) -> Optional[str]:
+        request = (query or "").lower()
+        normalized_columns = {
+            re.sub(r"[^a-z0-9]", "", str(column).lower()): column
+            for column in columns
+        }
+
+        for pattern in (r"\bby\s+([A-Za-z_][A-Za-z0-9_]*)", r"\bwhere\s+([A-Za-z_][A-Za-z0-9_]*)"):
+            match = re.search(pattern, query or "", flags=re.IGNORECASE)
+            if match:
+                candidate = re.sub(r"[^a-z0-9]", "", match.group(1).lower())
+                if candidate in normalized_columns:
+                    return normalized_columns[candidate]
+
+        for normalized, column in normalized_columns.items():
+            if normalized and re.search(rf"\b{re.escape(str(column).lower())}\b", request):
+                return column
+            if normalized and normalized in re.sub(r"[^a-z0-9]", "", request):
+                return column
+        return None
+
+    def _try_format_conversion(self, query, dataset_item, start_time, progress_callback=None):
+        data = dataset_item["data"].copy()
+        request = (query or "").lower()
+        if dataset_item["is_geo"]:
+            result = data
+        elif "geojson" in request or "geopackage" in request or "gpkg" in request:
+            return None
+        else:
+            result = data
+
+        output_path, metadata, label = self._save_artifact_direct(result, query)
+        summary = f"Converted the input dataset to {label} and saved {metadata.get('feature_count')} record(s)."
+        script = "# Loaded the input dataset and saved it in the requested output format.\n"
+        self._emit_progress(
+            progress_callback,
+            stage="artifact_generation",
+            message=summary,
+            data={"operation": "format_conversion", "output_format": label, "output_path": output_path},
+        )
+        return self._build_direct_response(
+            start_time,
+            query,
+            [dataset_item["path"]],
+            output_path,
+            metadata,
+            summary,
+            script,
+            progress_callback,
+        )
+
+    def _try_geometry_repair(self, query, geo_item, start_time, progress_callback=None):
+        gdf = geo_item["data"].copy()
+        if gdf.empty:
+            return None
+        invalid_before = int((~gdf.geometry.is_valid).sum())
+        if hasattr(gdf.geometry, "make_valid"):
+            gdf["geometry"] = gdf.geometry.make_valid()
+        else:
+            gdf["geometry"] = gdf.geometry.buffer(0)
+        gdf = gdf[~gdf.geometry.is_empty & gdf.geometry.notna()].copy()
+        invalid_after = int((~gdf.geometry.is_valid).sum())
+        output_path, metadata, label = self._save_artifact_direct(gdf, query)
+        summary = (
+            f"Checked and repaired geometries. Invalid geometries changed from {invalid_before} "
+            f"to {invalid_after}; saved {len(gdf)} feature(s) as {label}."
+        )
+        script = "# Loaded vector data, repaired invalid geometries with make_valid/buffer(0), and saved the result.\n"
+        self._emit_progress(
+            progress_callback,
+            stage="data_validation",
+            message=summary,
+            data={"operation": "geometry_repair", "invalid_before": invalid_before, "invalid_after": invalid_after},
+        )
+        return self._build_direct_response(start_time, query, [geo_item["path"]], output_path, metadata, summary, script, progress_callback)
+
+    def _try_add_geometry_measurements(self, query, geo_item, start_time, progress_callback=None):
+        request = (query or "").lower()
+        gdf = geo_item["data"].copy()
+        if gdf.empty:
+            return None
+        work_crs = self._numeric_work_crs(gdf)
+        work = gdf.to_crs(work_crs) if gdf.crs else gdf.set_crs("EPSG:4326").to_crs(work_crs)
+        added_fields = []
+
+        if self._has_any_term(request, ("area",)):
+            gdf["area_sq_m"] = work.geometry.area
+            gdf["area_sq_km"] = gdf["area_sq_m"] / 1_000_000
+            added_fields.extend(["area_sq_m", "area_sq_km"])
+        if self._has_any_term(request, ("length",)):
+            gdf["length_m"] = work.geometry.length
+            gdf["length_km"] = gdf["length_m"] / 1000
+            added_fields.extend(["length_m", "length_km"])
+        if self._has_any_term(request, ("centroid",)):
+            centroids = work.geometry.centroid
+            centroid_gdf = gpd.GeoSeries(centroids, crs=work.crs).to_crs("EPSG:4326")
+            gdf["centroid_lon"] = centroid_gdf.x.values
+            gdf["centroid_lat"] = centroid_gdf.y.values
+            added_fields.extend(["centroid_lon", "centroid_lat"])
+
+        if not added_fields:
+            return None
+        output_path, metadata, label = self._save_artifact_direct(gdf, query)
+        summary = f"Added geometry measurement field(s): {', '.join(added_fields)} and saved {len(gdf)} feature(s) as {label}."
+        script = "# Loaded vector data, projected to a measurement CRS, calculated requested geometry fields, and saved the result.\n"
+        self._emit_progress(
+            progress_callback,
+            stage="analysis_execution",
+            message=summary,
+            data={"operation": "geometry_measurements", "added_fields": added_fields, "work_crs": str(work_crs)},
+        )
+        return self._build_direct_response(start_time, query, [geo_item["path"]], output_path, metadata, summary, script, progress_callback)
+
+    def _try_dissolve(self, query, geo_item, start_time, progress_callback=None):
+        gdf = geo_item["data"].copy()
+        if gdf.empty:
+            return None
+        geometry_column = gdf.geometry.name
+        dissolve_column = self._query_column(query, [column for column in gdf.columns if column != geometry_column])
+        if not dissolve_column:
+            return None
+        numeric_columns = [
+            column for column in gdf.select_dtypes(include=[np.number]).columns
+            if column != dissolve_column
+        ]
+        aggfunc = {column: "sum" for column in numeric_columns}
+        result = gdf.dissolve(by=dissolve_column, as_index=False, aggfunc=aggfunc or "first")
+        if result.empty:
+            return None
+        output_path, metadata, label = self._save_artifact_direct(result, query)
+        summary = f"Dissolved {len(gdf)} feature(s) by {dissolve_column} into {len(result)} feature(s) and saved the result as {label}."
+        script = f"# Loaded vector data and ran gdf.dissolve(by={dissolve_column!r}).\n"
+        self._emit_progress(
+            progress_callback,
+            stage="analysis_execution",
+            message=summary,
+            data={"operation": "dissolve", "dissolve_column": dissolve_column, "output_features": len(result)},
+        )
+        return self._build_direct_response(start_time, query, [geo_item["path"]], output_path, metadata, summary, script, progress_callback)
+
+    def _try_nearest_distance(self, query, geo_datasets, start_time, progress_callback=None):
+        left_item, right_item = geo_datasets[0], geo_datasets[1]
+        left = left_item["data"].copy()
+        right = right_item["data"].copy()
+        if left.empty or right.empty:
+            return None
+        work_crs = self._numeric_work_crs(left)
+        left_work = left.to_crs(work_crs) if left.crs else left.set_crs("EPSG:4326").to_crs(work_crs)
+        if right.crs:
+            right_work = right.to_crs(work_crs)
+        else:
+            right_work = right.set_crs(left.crs or "EPSG:4326").to_crs(work_crs)
+        try:
+            nearest = gpd.sjoin_nearest(
+                left_work,
+                right_work,
+                how="left",
+                distance_col="nearest_distance_m",
+                lsuffix="left",
+                rsuffix="right",
+            )
+        except Exception:
+            return None
+        nearest = nearest.drop(columns=["index_right"], errors="ignore")
+        result = gpd.GeoDataFrame(nearest, geometry=left_work.geometry.name, crs=work_crs)
+        if left.crs:
+            result = result.to_crs(left.crs)
+        output_path, metadata, label = self._save_artifact_direct(result, query)
+        summary = f"Calculated nearest-feature distances for {len(result)} feature(s) and saved the result as {label}."
+        script = "# Loaded two vector datasets, projected to a meter-based CRS, and ran gpd.sjoin_nearest(..., distance_col='nearest_distance_m').\n"
+        self._emit_progress(
+            progress_callback,
+            stage="analysis_execution",
+            message=summary,
+            data={"operation": "nearest_distance", "output_features": len(result), "work_crs": str(work_crs)},
+        )
+        return self._build_direct_response(start_time, query, [left_item["path"], right_item["path"]], output_path, metadata, summary, script, progress_callback)
+
+    def _parse_filter_expression(self, query: str, columns: List[str]):
+        pattern = re.compile(
+            r"\b(?:where|filter|select)\b.*?\b([A-Za-z_][A-Za-z0-9_]*)\s*(==|=|>=|<=|>|<)\s*['\"]?([^'\"\n]+?)['\"]?(?:\s|$|,|\.)",
+            flags=re.IGNORECASE,
+        )
+        match = pattern.search(query or "")
+        if not match:
+            return None
+        column_lookup = {str(column).lower(): column for column in columns}
+        column = column_lookup.get(match.group(1).lower())
+        if column is None:
+            return None
+        return column, match.group(2), match.group(3).strip()
+
+    def _try_attribute_filter(self, query, dataset_item, start_time, progress_callback=None):
+        data = dataset_item["data"].copy()
+        expression = self._parse_filter_expression(query, list(data.columns))
+        if not expression:
+            return None
+        column, operator, raw_value = expression
+        series = data[column]
+        if pd.api.types.is_numeric_dtype(series):
+            try:
+                value = float(raw_value)
+            except ValueError:
+                return None
+        else:
+            value = raw_value
+
+        if operator in {"=", "=="}:
+            mask = series.astype(str).str.lower() == str(value).lower() if not pd.api.types.is_numeric_dtype(series) else series == value
+        elif operator == ">":
+            mask = series > value
+        elif operator == "<":
+            mask = series < value
+        elif operator == ">=":
+            mask = series >= value
+        elif operator == "<=":
+            mask = series <= value
+        else:
+            return None
+        result = data[mask].copy()
+        if result.empty:
+            return None
+        output_path, metadata, label = self._save_artifact_direct(result, query)
+        summary = f"Filtered {len(data)} record(s) where {column} {operator} {raw_value}; saved {len(result)} record(s) as {label}."
+        script = f"# Loaded data and filtered rows where {column} {operator} {raw_value!r}.\n"
+        self._emit_progress(
+            progress_callback,
+            stage="analysis_execution",
+            message=summary,
+            data={"operation": "attribute_filter", "column": column, "operator": operator, "output_features": len(result)},
+        )
+        return self._build_direct_response(start_time, query, [dataset_item["path"]], output_path, metadata, summary, script, progress_callback)
 
     def _try_attribute_join(self, query, datasets, geo_datasets, table_datasets, start_time, progress_callback=None):
         if not geo_datasets:
@@ -628,6 +949,99 @@ def list_registry():
             },
         )
         return self._build_direct_response(start_time, query, [item["path"] for item in datasets], output_path, metadata, summary, script, progress_callback)
+
+    def _geometry_family(self, gdf: gpd.GeoDataFrame) -> set[str]:
+        geometry_types = set(gdf.geometry.geom_type.dropna().str.lower())
+        families = set()
+        if any("point" in geom_type for geom_type in geometry_types):
+            families.add("point")
+        if any("polygon" in geom_type for geom_type in geometry_types):
+            families.add("polygon")
+        if any("line" in geom_type for geom_type in geometry_types):
+            families.add("line")
+        return families
+
+    def _count_field_name(self, query: str) -> str:
+        request = (query or "").lower()
+        if "hospital" in request:
+            return "hospital_count"
+        if "restaurant" in request:
+            return "restaurant_count"
+        if "point" in request:
+            return "point_count"
+        return "feature_count"
+
+    def _try_point_counts_by_polygon(self, query, geo_datasets, start_time, progress_callback=None):
+        polygon_items = [
+            item for item in geo_datasets
+            if "polygon" in self._geometry_family(item["data"])
+        ]
+        point_items = [
+            item for item in geo_datasets
+            if "point" in self._geometry_family(item["data"])
+        ]
+        if not polygon_items or not point_items:
+            return None
+
+        polygon_item = polygon_items[0]
+        point_item = point_items[0]
+        polygons = polygon_item["data"].copy()
+        points = point_item["data"].copy()
+        if polygons.empty or points.empty:
+            return None
+
+        if polygons.crs and points.crs and str(polygons.crs) != str(points.crs):
+            points = points.to_crs(polygons.crs)
+
+        polygons = polygons.reset_index(drop=True)
+        polygon_index_name = "__gas_polygon_index"
+        polygons[polygon_index_name] = polygons.index
+
+        joined = gpd.sjoin(
+            points,
+            polygons[[polygon_index_name, polygons.geometry.name]],
+            how="left",
+            predicate="within",
+        )
+        count_field = self._count_field_name(query)
+        counts = joined.groupby(polygon_index_name).size()
+        result = polygons.copy()
+        result[count_field] = result[polygon_index_name].map(counts).fillna(0).astype(int)
+        result = result.drop(columns=[polygon_index_name])
+
+        output_path, metadata, label = self._save_artifact_direct(result, query)
+        total_points = int(result[count_field].sum())
+        summary = (
+            f"Counted {total_points} point feature(s) within {len(result)} polygon feature(s) "
+            f"and saved the county-level result as {label} with a {count_field} field."
+        )
+        script = (
+            "import geopandas as gpd\n"
+            "# Loaded polygon and point datasets, aligned CRS, ran gpd.sjoin(points, polygons, predicate='within'), "
+            f"and counted matches into {count_field}.\n"
+        )
+        self._emit_progress(
+            progress_callback,
+            stage="analysis_execution",
+            message=summary,
+            data={
+                "operation": "point_count_by_polygon",
+                "polygon_features": len(result),
+                "point_features": len(points),
+                "count_field": count_field,
+                "matched_points": total_points,
+            },
+        )
+        return self._build_direct_response(
+            start_time,
+            query,
+            [polygon_item["path"], point_item["path"]],
+            output_path,
+            metadata,
+            summary,
+            script,
+            progress_callback,
+        )
 
     def _try_spatial_join(self, query, geo_datasets, start_time, progress_callback=None):
         left_item, right_item = geo_datasets[0], geo_datasets[1]

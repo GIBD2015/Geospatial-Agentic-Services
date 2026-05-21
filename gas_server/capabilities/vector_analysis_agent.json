@@ -3,10 +3,10 @@
   "profile": {
     "agent_id": "vector_analysis_agent",
     "name": "Vector Analysis Agent",
-    "description": "This agent performs vector-based spatial analysis and transformation using deterministic GeoPandas workflows for common operations and model-backed code workflows for more complex requests. It supports operations such as clipping, joining, buffering, intersecting, distance analysis, filtering, and aggregation. It can return GeoPackage or GeoJSON for spatial outputs and CSV for tabular outputs derived from the analysis.",
+    "description": "This agent performs vector-based spatial analysis and transformation using deterministic GeoPandas workflows for common operations and model-backed code workflows for more complex requests. It supports operations such as clipping, joining, point-in-polygon counting, buffering, intersecting, dissolving, area/length/centroid calculation, nearest-distance analysis, attribute filtering, geometry repair, format conversion, and aggregation. It can return GeoPackage or GeoJSON for spatial outputs and CSV for tabular outputs derived from the analysis.",
     "version": "2.1.0",
     "base_url": "https://www.geospatial-agentic-services.online/agents/vector_analysis_agent",
-    "last_updated": "2026-04-28",
+    "last_updated": "2026-05-20",
     "provider": {
       "name": "Geoinformation and Big Data Research Lab (GIBD)",
       "website": "https://giscience.psu.edu",
@@ -25,6 +25,15 @@
     "overlay",
     "spatial join",
     "attribute join",
+    "point-in-polygon count",
+    "feature count",
+    "dissolve",
+    "geometry repair",
+    "nearest distance",
+    "attribute filter",
+    "area calculation",
+    "centroid",
+    "format conversion",
     "GeoPackage",
     "GeoJSON",
     "CSV",
@@ -34,14 +43,15 @@
     {
       "skill_id": "code_driven_vector_spatial_analysis",
       "name": "Code-Driven Vector Spatial Analysis",
-      "description": "Uses deterministic GeoPandas/Pandas workflows for common joins, buffers, clips, and intersections when the operation can be confidently inferred. For more complex requests, it iteratively writes and executes Python code in a sandboxed environment to load, inspect, and analyze vector datasets using GeoPandas, Pandas, and Shapely.",
+      "description": "Uses deterministic GeoPandas/Pandas workflows for common joins, point-in-polygon counts, buffers, clips, intersections, dissolves, geometry measurements, nearest-distance calculations, attribute filters, geometry repair, and format conversion when the operation can be confidently inferred. For more complex requests, it iteratively writes and executes Python code in a sandboxed environment to load, inspect, and analyze vector datasets using GeoPandas, Pandas, and Shapely.",
       "constraints": {
         "spatial": "Dependent on the coordinate reference systems (CRS) of the input datasets. The agent is instructed to project data to an appropriate CRS for distance calculations.",
         "temporal": null,
         "other": [
           "The autonomous reasoning and execution loop is capped at a maximum of 40 iterations.",
           "Spatial results are saved as GeoPackage (.gpkg) by default unless GeoJSON is explicitly requested; tabular/attribute-only results are saved as CSV (.csv).",
-          "The geometry column must always be retained in spatial outputs."
+          "The geometry column must always be retained in spatial outputs.",
+          "Deterministic common-operation routing is attempted before model-backed code generation. If no deterministic operation matches confidently, the agent falls back to its model-backed workflow."
         ]
       }
     }
@@ -135,8 +145,8 @@
       "description": "Returns the consolidated Python script used for execution in the script field. The script history is cleaned to remove redundant imports and file reads."
     },
     "validation": {
-      "supported": false,
-      "description": "Deterministic common-operation workflows validate join matches and non-empty spatial results before saving. More complex model-backed workflows still require downstream review for domain correctness."
+      "supported": true,
+      "description": "Deterministic common-operation workflows validate join matches, point-in-polygon counts, non-empty spatial results, geometry repair outcomes, and generated measurement/filter/nearest-distance fields before saving. More complex model-backed workflows still require downstream review for domain correctness."
     }
   },
   "governance": {
@@ -152,6 +162,6 @@
     "policy_notes": "If the agent is used, please cite the relevant research on geospatial AI agents."
   },
   "extensions": {
-    "description": "This agent uses GeoPandas, Pandas, Shapely, and NumPy for vector spatial analysis. Deterministic fast paths support attribute joins, spatial joins, buffering, clipping, and intersections. The model-backed fallback maintains a persistent registry across code execution steps for intermediate variable storage and reuse."
+    "description": "This agent uses GeoPandas, Pandas, Shapely, and NumPy for vector spatial analysis. Deterministic fast paths support attribute joins, spatial joins, point-in-polygon feature counts, buffering, clipping, intersections, dissolves, area/length/centroid fields, nearest-distance analysis, attribute filtering, geometry repair, and format conversion. The model-backed fallback maintains a persistent registry across code execution steps for intermediate variable storage and reuse."
   }
 }

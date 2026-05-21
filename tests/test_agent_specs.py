@@ -826,6 +826,155 @@ def test_vector_analysis_buffer_uses_deterministic_fast_path(tmp_path):
     assert buffered.geometry.iloc[0].area > 0
 
 
+def test_vector_analysis_point_count_by_polygon_uses_deterministic_fast_path(tmp_path):
+    gpd = pytest.importorskip("geopandas")
+    shapely_geometry = pytest.importorskip("shapely.geometry")
+
+    counties_path = tmp_path / "counties.gpkg"
+    hospitals_path = tmp_path / "hospitals.geojson"
+
+    counties = gpd.GeoDataFrame(
+        {
+            "county_name": ["A", "B", "C"],
+            "geometry": [
+                shapely_geometry.box(0, 0, 1, 1),
+                shapely_geometry.box(1, 0, 2, 1),
+                shapely_geometry.box(2, 0, 3, 1),
+            ],
+        },
+        crs="EPSG:4326",
+    )
+    counties.to_file(counties_path, driver="GPKG")
+
+    hospitals = gpd.GeoDataFrame(
+        {
+            "hospital_name": ["H1", "H2", "H3"],
+            "geometry": [
+                shapely_geometry.Point(0.25, 0.25),
+                shapely_geometry.Point(0.75, 0.75),
+                shapely_geometry.Point(1.25, 0.25),
+            ],
+        },
+        crs="EPSG:4326",
+    )
+    hospitals.to_file(hospitals_path, driver="GeoJSON")
+
+    agent = VectorAnalysisAgent(api_key=None)
+    agent.output_dir = str(tmp_path)
+    events = []
+    result = agent.run(
+        "Count the number of hospital points in each county and return hospital_count.",
+        [str(counties_path), str(hospitals_path)],
+        progress_callback=events.append,
+    )
+
+    assert result["metrics"]["llm_calls"] == 0
+    output = gpd.read_file(result["outputs"]["dataset_path"])
+    assert output["hospital_count"].tolist() == [2, 1, 0]
+    assert any(event.get("data", {}).get("operation") == "point_count_by_polygon" for event in events)
+
+
+def test_vector_analysis_dissolve_uses_deterministic_fast_path(tmp_path):
+    gpd = pytest.importorskip("geopandas")
+    shapely_geometry = pytest.importorskip("shapely.geometry")
+
+    dataset_path = tmp_path / "counties.geojson"
+    gdf = gpd.GeoDataFrame(
+        {
+            "region": ["west", "west", "east"],
+            "population": [10, 20, 30],
+            "geometry": [
+                shapely_geometry.box(0, 0, 1, 1),
+                shapely_geometry.box(1, 0, 2, 1),
+                shapely_geometry.box(3, 0, 4, 1),
+            ],
+        },
+        crs="EPSG:4326",
+    )
+    gdf.to_file(dataset_path, driver="GeoJSON")
+
+    agent = VectorAnalysisAgent(api_key=None)
+    agent.output_dir = str(tmp_path)
+    result = agent.run("Dissolve these polygons by region.", [str(dataset_path)])
+
+    assert result["metrics"]["llm_calls"] == 0
+    output = gpd.read_file(result["outputs"]["dataset_path"])
+    assert sorted(output["region"].tolist()) == ["east", "west"]
+    assert output.loc[output["region"] == "west", "population"].iloc[0] == 30
+
+
+def test_vector_analysis_geometry_measurements_use_deterministic_fast_path(tmp_path):
+    gpd = pytest.importorskip("geopandas")
+    shapely_geometry = pytest.importorskip("shapely.geometry")
+
+    dataset_path = tmp_path / "polygons.geojson"
+    gdf = gpd.GeoDataFrame(
+        {"id": [1], "geometry": [shapely_geometry.box(-77.1, 40.0, -77.0, 40.1)]},
+        crs="EPSG:4326",
+    )
+    gdf.to_file(dataset_path, driver="GeoJSON")
+
+    agent = VectorAnalysisAgent(api_key=None)
+    agent.output_dir = str(tmp_path)
+    result = agent.run("Calculate area and centroid fields for this dataset.", [str(dataset_path)])
+
+    assert result["metrics"]["llm_calls"] == 0
+    output = gpd.read_file(result["outputs"]["dataset_path"])
+    assert {"area_sq_m", "area_sq_km", "centroid_lon", "centroid_lat"}.issubset(output.columns)
+    assert output["area_sq_m"].iloc[0] > 0
+
+
+def test_vector_analysis_attribute_filter_uses_deterministic_fast_path(tmp_path):
+    gpd = pytest.importorskip("geopandas")
+    shapely_geometry = pytest.importorskip("shapely.geometry")
+
+    dataset_path = tmp_path / "counties.geojson"
+    gdf = gpd.GeoDataFrame(
+        {
+            "county_name": ["A", "B", "C"],
+            "population": [100, 250, 300],
+            "geometry": [shapely_geometry.Point(i, 0) for i in range(3)],
+        },
+        crs="EPSG:4326",
+    )
+    gdf.to_file(dataset_path, driver="GeoJSON")
+
+    agent = VectorAnalysisAgent(api_key=None)
+    agent.output_dir = str(tmp_path)
+    result = agent.run("Filter where population >= 250.", [str(dataset_path)])
+
+    assert result["metrics"]["llm_calls"] == 0
+    output = gpd.read_file(result["outputs"]["dataset_path"])
+    assert output["county_name"].tolist() == ["B", "C"]
+
+
+def test_vector_analysis_nearest_distance_uses_deterministic_fast_path(tmp_path):
+    gpd = pytest.importorskip("geopandas")
+    shapely_geometry = pytest.importorskip("shapely.geometry")
+
+    origins_path = tmp_path / "origins.geojson"
+    targets_path = tmp_path / "targets.geojson"
+    origins = gpd.GeoDataFrame(
+        {"id": [1, 2], "geometry": [shapely_geometry.Point(-77.0, 40.0), shapely_geometry.Point(-77.2, 40.0)]},
+        crs="EPSG:4326",
+    )
+    targets = gpd.GeoDataFrame(
+        {"target_id": [10], "geometry": [shapely_geometry.Point(-77.01, 40.0)]},
+        crs="EPSG:4326",
+    )
+    origins.to_file(origins_path, driver="GeoJSON")
+    targets.to_file(targets_path, driver="GeoJSON")
+
+    agent = VectorAnalysisAgent(api_key=None)
+    agent.output_dir = str(tmp_path)
+    result = agent.run("Calculate nearest distance from each origin to the closest target.", [str(origins_path), str(targets_path)])
+
+    assert result["metrics"]["llm_calls"] == 0
+    output = gpd.read_file(result["outputs"]["dataset_path"])
+    assert "nearest_distance_m" in output.columns
+    assert output["nearest_distance_m"].notna().all()
+
+
 def test_map_projection_explicit_epsg_uses_deterministic_path(tmp_path):
     gpd = pytest.importorskip("geopandas")
     shapely_geometry = pytest.importorskip("shapely.geometry")
