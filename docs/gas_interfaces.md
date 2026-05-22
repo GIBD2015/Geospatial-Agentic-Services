@@ -50,6 +50,13 @@ The server-level capability document is returned by:
 GET /?SERVICE=GAS&VERSION=1.0.0&REQUEST=GetCapabilities
 ```
 
+For the GAS server query interface, parameter names are matched
+case-insensitively. For example, `SERVICE`, `service`, and `Service` are
+treated as the same parameter name. The `SERVICE` and `REQUEST` values are
+also matched case-insensitively. The `VERSION` parameter is required and must
+currently be `1.0.0`; a misspelled parameter such as `vs=1.0.0` is not treated
+as a valid version.
+
 It tells clients what the GAS server publishes. Important fields include:
 
 - `service`: identifies the service family, currently `GAS`.

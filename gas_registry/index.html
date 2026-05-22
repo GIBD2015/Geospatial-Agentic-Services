@@ -1783,10 +1783,20 @@
             // POST a remote GetCapabilities URL to our server, which fetches
             // every agent it publishes and writes them into gas_registry.db.
             // (The remote fetch is server-side, so no browser CORS limits.)
+            function adminTokenHeaders() {
+                var input = document.getElementById("register-token-input");
+                var token = input ? (input.value || "").trim() : "";
+                return token ? { "X-Registry-Admin-Token": token } : {};
+            }
+
             function registerToDatabase(capabilitiesUrl) {
+                var headers = Object.assign(
+                    { "Content-Type": "application/json" },
+                    adminTokenHeaders()
+                );
                 return fetch(apiUrl("/registry/api/gas/register"), {
                     method: "POST",
-                    headers: { "Content-Type": "application/json" },
+                    headers: headers,
                     body: JSON.stringify({ url: capabilitiesUrl })
                 }).then(function(r) {
                     return r.json().then(function(body) {
@@ -1979,6 +1989,12 @@
                                 'value="' + escapeHtml(defaultUrl) + '">' +
                             <!-- '<p class="form-hint">The server must allow cross-origin requests (CORS) or be on the same origin as this page.</p>' + -->
                         '</div>' +
+                        '<div class="form-row">' +
+                            '<label class="form-label" for="register-token-input">Admin Token</label>' +
+                            '<input id="register-token-input" class="form-input" type="password" autocomplete="off" ' +
+                                'placeholder="Required only when configured by the registry administrator">' +
+                            '<p class="form-hint">Used only for registration requests. Ask the registry administrator for this token.</p>' +
+                        '</div>' +
                         '<div id="register-status" class="form-status"></div>' +
                         '<div id="register-agent-list"></div>' +
                         '<div class="form-actions">' +
@@ -2017,9 +2033,13 @@
             }
 
             function registerSelected(capabilitiesUrl, names) {
+                var headers = Object.assign(
+                    { "Content-Type": "application/json" },
+                    adminTokenHeaders()
+                );
                 return fetch(apiUrl("/registry/api/gas/register-selected"), {
                     method: "POST",
-                    headers: { "Content-Type": "application/json" },
+                    headers: headers,
                     body: JSON.stringify({ url: capabilitiesUrl, names: names })
                 }).then(function(r) {
                     return r.json().then(function(body) {
@@ -2094,6 +2114,7 @@
 
             function handleListAgents() {
                 var input = document.getElementById("register-url-input");
+                var tokenInput = document.getElementById("register-token-input");
                 var statusBox = document.getElementById("register-status");
                 var listBtn = document.getElementById("register-list");
                 var url = (input.value || "").trim();
@@ -2124,6 +2145,7 @@
             function handleRegisterSubmit(e) {
                 e.preventDefault();
                 var input = document.getElementById("register-url-input");
+                var tokenInput = document.getElementById("register-token-input");
                 var statusBox = document.getElementById("register-status");
                 var submitBtn = document.getElementById("register-submit");
                 var url = (input.value || "").trim();
@@ -2144,6 +2166,7 @@
                 statusBox.textContent = "Fetching capabilities…";
                 submitBtn.disabled = true;
                 input.disabled = true;
+                if (tokenInput) tokenInput.disabled = true;
 
                 statusBox.textContent = selected
                     ? "Registering " + selected.length + " selected agent" + (selected.length === 1 ? "" : "s") + "…"
@@ -2179,6 +2202,7 @@
                         if (cancelBtn) cancelBtn.textContent = "Close";
                         submitBtn.style.display = "none";
                         input.disabled = true;
+                        if (tokenInput) tokenInput.disabled = true;
                     })
                     .catch(function(err) {
                         statusBox.className = "form-status error";
@@ -2186,6 +2210,8 @@
                         statusBox.textContent = msg;
                         submitBtn.disabled = false;
                         input.disabled = false;
+                        var tokenInput = document.getElementById("register-token-input");
+                        if (tokenInput) tokenInput.disabled = false;
                     });
             }
         })();

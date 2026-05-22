@@ -36,6 +36,17 @@ JSON_DIR = PROJECT_ROOT / "gas_server" / "capabilities"
 DEFAULT_PUBLIC_BASE_URL = "https://www.geospatial-agentic-services.online"
 
 
+def _query_arg(name: str, default: str = "") -> str:
+    value = request.args.get(name)
+    if value is not None:
+        return value
+    name_lower = name.lower()
+    for key, candidate in request.args.items():
+        if key.lower() == name_lower:
+            return candidate
+    return default
+
+
 def _load_gas_json(file_name: str):
     file_path = JSON_DIR / file_name
 
@@ -160,12 +171,24 @@ def _payload_requests_stream(payload) -> bool:
 
 @app.route("/", methods=["GET"])
 def root():
-    service = request.args.get("SERVICE", "").upper()
-    version = request.args.get("VERSION", "")
-    gas_request = request.args.get("REQUEST", "")
+    service = _query_arg("SERVICE").upper()
+    version = _query_arg("VERSION")
+    gas_request = _query_arg("REQUEST")
+    gas_request_key = gas_request.lower()
 
     if service == "GAS":
-        if version and version != "1.0.0":
+        if not version:
+            return _json_response(
+                {
+                    "error": {
+                        "code": "MISSING_VERSION",
+                        "message": "GAS requests must include VERSION=1.0.0.",
+                    }
+                },
+                HTTPStatus.BAD_REQUEST,
+            )
+
+        if version != "1.0.0":
             return _json_response(
                 {
                     "error": {
@@ -176,7 +199,7 @@ def root():
                 HTTPStatus.BAD_REQUEST,
             )
 
-        if gas_request == "GetCapabilities":
+        if gas_request_key == "getcapabilities":
             payload = _load_get_capabilities_json()
 
             if payload is None:
@@ -192,8 +215,8 @@ def root():
 
             return _json_response(payload)
 
-        if gas_request == "DescribeAgent":
-            agent_name = request.args.get("agent_id") or ""
+        if gas_request_key == "describeagent":
+            agent_name = _query_arg("agent_id")
             if agent_name not in INTERNAL_SERVICE_CLIENTS:
                 return _json_response(
                     {

@@ -99,6 +99,36 @@ def test_gas_server_get_capabilities_is_registry_driven():
         assert agent["DescribeAgent"].startswith("http://localhost/")
 
 
+def test_gas_server_discovery_query_parameter_names_are_case_insensitive():
+    from gas_server.entrypoints.gas_server import app
+
+    response = app.test_client().get("/?service=gas&version=1.0.0&request=getcapabilities")
+    payload = response.get_json()
+
+    assert response.status_code == 200
+    assert payload["request"] == "GetCapabilities"
+
+
+def test_gas_server_discovery_requires_version_parameter():
+    from gas_server.entrypoints.gas_server import app
+
+    response = app.test_client().get("/?SERVICE=GAS&vs=1.0.0&REQUEST=GetCapabilities")
+    payload = response.get_json()
+
+    assert response.status_code == 400
+    assert payload["error"]["code"] == "MISSING_VERSION"
+
+
+def test_gas_server_discovery_rejects_unsupported_version():
+    from gas_server.entrypoints.gas_server import app
+
+    response = app.test_client().get("/?SERVICE=GAS&VERSION=2.0.0&REQUEST=GetCapabilities")
+    payload = response.get_json()
+
+    assert response.status_code == 400
+    assert payload["error"]["code"] == "INVALID_VERSION"
+
+
 def test_describe_agent_rewrites_profile_base_url_to_request_host():
     from gas_server.entrypoints.gas_server import app
 
@@ -110,6 +140,40 @@ def test_describe_agent_rewrites_profile_base_url_to_request_host():
 
     assert response.status_code == 200
     assert payload["profile"]["base_url"] == "http://example.test/agents/mapping_agent"
+
+
+def test_describe_agent_query_parameter_names_are_case_insensitive():
+    from gas_server.entrypoints.gas_server import app
+
+    response = app.test_client().get(
+        "/?Service=gas&Version=1.0.0&Request=describeagent&Agent_ID=mapping_agent",
+        headers={"Host": "example.test"},
+    )
+    payload = response.get_json()
+
+    assert response.status_code == 200
+    assert payload["profile"]["agent_id"] == "mapping_agent"
+    assert payload["profile"]["base_url"] == "http://example.test/agents/mapping_agent"
+
+
+def test_agent_describe_endpoint_query_parameter_names_are_case_insensitive():
+    app = load_service_apps()["mapping_agent"]
+
+    response = app.test_client().get("/?service=gas&version=1.0.0&request=describeagent")
+    payload = response.get_json()
+
+    assert response.status_code == 200
+    assert payload["profile"]["agent_id"] == "mapping_agent"
+
+
+def test_agent_describe_endpoint_requires_version_parameter():
+    app = load_service_apps()["mapping_agent"]
+
+    response = app.test_client().get("/?SERVICE=GAS&vs=1.0.0&REQUEST=DescribeAgent")
+    payload = response.get_json()
+
+    assert response.status_code == 400
+    assert payload["error"]["code"] == "MISSING_VERSION"
 
 
 

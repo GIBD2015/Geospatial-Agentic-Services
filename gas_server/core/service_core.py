@@ -108,6 +108,18 @@ REQUEST_STREAM_FIELDS = (
     "STREAM",
 )
 
+
+def _query_arg(name: str, default: str = "") -> str:
+    value = request.args.get(name)
+    if value is not None:
+        return value
+    name_lower = name.lower()
+    for key, candidate in request.args.items():
+        if key.lower() == name_lower:
+            return candidate
+    return default
+
+
 DATASET_PATH_KEYS = {
     "dataset_path",
     "dataset_paths",
@@ -2407,12 +2419,27 @@ def load_describe_agent_json(spec: AgentSpec, base_url: str | None = None) -> Di
 
 
 def handle_describe_agent(spec: AgentSpec) -> Response:
-    service = request.args.get("SERVICE", "").upper()
-    gas_request = request.args.get("REQUEST", "")
-    if service != "GAS" or gas_request != "DescribeAgent":
+    service = _query_arg("SERVICE").upper()
+    version = _query_arg("VERSION")
+    gas_request = _query_arg("REQUEST")
+    if service != "GAS" or gas_request.lower() != "describeagent":
         return _gas_error(
             "INVALID_ARGUMENT",
-            "This endpoint supports SERVICE=GAS&REQUEST=DescribeAgent.",
+            "This endpoint supports SERVICE=GAS&VERSION=1.0.0&REQUEST=DescribeAgent.",
+            status_code=HTTPStatus.BAD_REQUEST,
+        )
+
+    if not version:
+        return _gas_error(
+            "MISSING_VERSION",
+            "GAS requests must include VERSION=1.0.0.",
+            status_code=HTTPStatus.BAD_REQUEST,
+        )
+
+    if version != "1.0.0":
+        return _gas_error(
+            "INVALID_VERSION",
+            f"Unsupported GAS version '{version}'.",
             status_code=HTTPStatus.BAD_REQUEST,
         )
 
