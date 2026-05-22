@@ -7,13 +7,13 @@ from pathlib import Path
 
 from flask import Flask, jsonify, request, send_from_directory
 
-import gas_registry
+from gas_registry import gas_registry
 
 
 REGISTRY_DIR = Path(__file__).resolve().parent
 DB_PATH = str(REGISTRY_DIR / "gas_registry.db")
 
-API_PATH = "/registry/api/gas"
+API_PATH = "/api/gas"
 BOOL_FILTERS = (
     "provenance_supported",
     "reproducibility_supported",
@@ -30,7 +30,7 @@ def _describe_url(registry_id: str) -> str:
         "REQUEST": "DescribeAgent",
         "registry_id": registry_id,
     })
-    return f"{API_PATH}?{params}"
+    return f"/registry{API_PATH}?{params}"
 
 
 def _source_describe_url(describe_url: str | None, source_base_url: str | None, agent_id: str | None) -> str:
@@ -82,7 +82,7 @@ def _load_detail(db_path: str, registry_id: str) -> dict | None:
     return gas_registry.load_agent_from_db(registry_id, db_path=db_path)
 
 
-@app.route("/registry")
+@app.route("/")
 def gas_registry_index():
     return send_from_directory(REGISTRY_DIR, "index.html")
 
