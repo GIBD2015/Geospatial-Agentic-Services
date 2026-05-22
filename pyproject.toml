@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "gas"
 version = "0.1.0"
-description = "Geospatial Agent Server reference implementation."
+description = "Geospatial Agentic Services reference implementation and toolkit."
 readme = "README.md"
 requires-python = ">=3.10"
 license = "MIT"

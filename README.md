@@ -1,4 +1,4 @@
-# Geospatial Agentic Services (GAS) Server
+# Geospatial Agentic Services (GAS)
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Python](https://img.shields.io/badge/Python-3.10%2B-blue.svg)](pyproject.toml)
@@ -7,16 +7,19 @@
 [![GAS Registry](https://img.shields.io/badge/GAS-Registry-256b7f.svg)](http://geospatial-agentic-services.online/registry)
 [![GIBD Lab](https://img.shields.io/badge/GIBD-Lab-lightgrey.svg)](https://giscience.psu.edu/)
 
-This repository provides a concrete implementation of the server component of
-the Geospatial Agentic Services (GAS) framework. It publishes geospatial agents
-as independent web services, discoverable through
-`GetCapabilities` and `DescribeAgent` JSON documents.
+This repository provides a reference implementation and developer toolkit for
+the Geospatial Agentic Services (GAS) framework. Its main component is a GAS
+server that publishes geospatial agents as discoverable web services through
+standard `GetCapabilities` and `DescribeAgent` JSON documents. The repository
+also includes a lightweight Python client SDK, a GAS Registry web app, example
+notebooks, developer documentation, and working agent implementations.
 
-The [included agents](docs/included_agents.md) are working GAS services and
-implementation examples. Developers can use them as references for different
-design patterns, including deterministic geospatial workflows, model-assisted
-code generation, data retrieval, workflow planning, mapping, raster analysis,
-vector analysis, data inspection, and spatial statistics.
+The included server framework handles service discovery, task execution,
+streaming progress, artifact delivery, and response normalization. The
+[included agents](docs/included_agents.md) demonstrate how intelligent
+geospatial workflows such as data retrieval, workflow planning, mapping,
+raster analysis, vector analysis, data inspection, and spatial statistics can
+be exposed as interoperable GAS services.
 
 For the conceptual framework behind this implementation, please refer to the
 GAS paper: [Geospatial Agentic Services: A Framework for Interoperable
@@ -244,14 +247,75 @@ files are in [packages/gas-client](packages/gas-client). See
 guide. The package README is in
 [packages/gas-client/README.md](packages/gas-client/README.md).
 
+## GAS Registry
+
+The repository also includes the GAS Registry, a lightweight Flask catalog app
+for discovering published GAS agent services across one or more GAS servers.
+The registry reads standard `GetCapabilities` and `DescribeAgent` documents,
+stores agent descriptions in a searchable catalog, and helps people,
+applications, and AI orchestrators inspect, compare, and reuse interoperable
+geospatial agents.
+
+The public registry is available at
+[http://geospatial-agentic-services.online/registry](http://geospatial-agentic-services.online/registry).
+
+Run the registry locally after starting a GAS server:
+
+```powershell
+python -m gas_registry.app
+```
+
+In local development, the registry uses port `4043` by default:
+
+```text
+http://127.0.0.1:4043/registry
+```
+
+The registry source is kept in [gas_registry](gas_registry). See
+[docs/gas_registry.md](docs/gas_registry.md) for UI details, registration
+workflow, API examples, and deployment notes.
+
 ## Example Notebooks
 
 Example workflows are available in [examples_for_using_gas_services](examples_for_using_gas_services).
-The notebook
-[pa_health_food_hospitals_web_mapping_app_workflow.ipynb](examples_for_using_gas_services/pa_health_food_hospitals_web_mapping_app_workflow.ipynb)
-demonstrates a streamed multi-agent workflow that downloads CDC health data,
-OpenStreetMap fast-food restaurants, and PASDA hospitals, then uses
-`web_mapping_app_agent` to build a browser-ready Pennsylvania web mapping app.
+They show several ways to consume GAS services from notebooks, ranging from raw
+HTTP requests to streamed multi-agent service chains.
+
+- [gas_raw_requests_usage.ipynb](examples_for_using_gas_services/gas_raw_requests_usage.ipynb)
+  demonstrates the GAS HTTP interface directly with `requests`, including
+  `GetCapabilities`, `DescribeAgent`, synchronous execution, asynchronous task
+  polling, streaming events, result retrieval, and cancellation.
+- [county_population_choropleth_workflow.ipynb](examples_for_using_gas_services/county_population_choropleth_workflow.ipynb)
+  uses `GasClient` to retrieve 2021 county population data, project it to
+  Lambert Conformal Conic, and create a quantile choropleth map.
+- [cdc_earthquake_vector_mapping_workflow.ipynb](examples_for_using_gas_services/cdc_earthquake_vector_mapping_workflow.ipynb)
+  combines CDC PLACES health data and recent USGS earthquake events to
+  demonstrate streamed data retrieval, vector analysis, static mapping, and web
+  mapping app generation.
+- [pa_health_food_hospitals_web_mapping_app_workflow.ipynb](examples_for_using_gas_services/pa_health_food_hospitals_web_mapping_app_workflow.ipynb)
+  downloads Pennsylvania CDC health data, county boundaries, fast-food
+  restaurants, and PASDA hospital locations, then builds a browser-ready web
+  mapping app.
+- [raster_agent_dem_workflow.ipynb](examples_for_using_gas_services/raster_agent_dem_workflow.ipynb)
+  downloads DEM data for Centre County, Pennsylvania, then uses `raster_agent`
+  to generate raster outputs such as cleaned GeoTIFFs, hillshade, slope,
+  elevation classes, and masks.
+- [geospatial_workflow_planning_agent_demo.ipynb](examples_for_using_gas_services/geospatial_workflow_planning_agent_demo.ipynb)
+  demonstrates the plan-only workflow planning agent, which reads GAS
+  capabilities and returns a client-side workflow plan, optional code, notebook
+  skeletons, and graph artifacts.
+- [hospital_mapping_with_distributed_agents_and_multiple_request_modes.ipynb](examples_for_using_gas_services/hospital_mapping_with_distributed_agents_and_multiple_request_modes.ipynb)
+  shows a distributed GAS service chain across two GAS servers while using
+  synchronous, asynchronous, and streaming request modes in one workflow.
+- [all_agents_streaming_workflow.ipynb](examples_for_using_gas_services/all_agents_streaming_workflow.ipynb)
+  exercises every published GAS agent with streamed calls and collects the
+  resulting retrieval, inspection, projection, vector, raster, statistics,
+  static map, and web app artifacts.
+
+The folder also includes
+[geospatial_workflow_planning_agent_app.html](examples_for_using_gas_services/geospatial_workflow_planning_agent_app.html),
+a browser-based web app developed around the
+`geospatial_workflow_planning_agent`.
 
 ## Test
 
