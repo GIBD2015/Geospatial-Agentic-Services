@@ -1,0 +1,160 @@
+{
+  "$schema": "https://www.geospatial-agentic-services.online/schemas/describe_agent.schema.json",
+  "profile": {
+    "agent_id": "spatial_analysis_agent",
+    "name": "Spatial Analysis Agent",
+    "description": "End-to-end LLM-driven geoprocessing pipeline. Audits input datasets to build a data registry, asks an LLM to design a NetworkX workflow DAG that solves the task, generates Python code for each operation node, assembles the operations into a single executable program, and runs it in a sandboxed environment. A pre-built workflow graph (GraphML) and/or pre-built data registry may be supplied as parameters to skip the corresponding stage.",
+    "version": "1.1.0",
+    "base_url": "https://www.geospatial-agentic-services.online/agents/spatial_analysis_agent",
+    "last_updated": "2026-05-24",
+    "provider": {
+      "name": "Geoinformation and Big Data Research Lab (GIBD)",
+      "website": "https://giscience.psu.edu",
+      "contacts": [
+        {
+          "name": "Temitope E. Akinboyewa",
+          "email": "teakinboyewa@gmail.com"
+        }
+      ]
+    },
+    "default_model": "gpt-5.2"
+  },
+  "keywords": [
+    "geoprocessing",
+    "workflow execution",
+    "DAG",
+    "workflow graph",
+    "GraphML",
+    "code generation",
+    "assembly code",
+    "spatial analysis",
+    "operation node",
+    "GeoPandas",
+    "sandbox execution"
+  ],
+  "skills": [
+    {
+      "skill_id": "end_to_end_spatial_analysis_workflow",
+      "name": "End-to-End Spatial Analysis Workflow",
+      "description": "From a natural-language task and a set of input datasets, the agent: (1) audits each dataset to build a data registry (shape, columns, dtypes, head sample); (2) asks an LLM to design a NetworkX workflow DAG with parallel branches as appropriate; (3) generates Python code for each operation node with ancestor/descendant context; (4) assembles all operations into one executable program and runs it in a sandbox. On runtime failure, an LLM repair pass is attempted, followed by a regen-from-scratch fallback. Final results are persisted to FINAL_OUTPUT_DIR and reported as primary artifacts.",
+      "constraints": {
+        "spatial": "Operates on whichever spatial data the graph references; CRS handling is the responsibility of the generated operation code.",
+        "temporal": null,
+        "other": [
+          "If a pre-built GraphML is supplied via parameters.workflow_graph_path (or as a .graphml/.gml entry in input_datasets), the workflow generation stage is skipped.",
+          "If a pre-built data registry is supplied via parameters.data_registry, the audit stage is skipped.",
+          "Final results are written to a FINAL_OUTPUT_DIR subfolder under a per-task working directory; intermediates go to OUTPUT_DIR.",
+          "Assembly code is executed via exec() in a sandboxed working directory; on failure, a single LLM repair pass and a single regen-from-scratch fallback are attempted."
+        ]
+      }
+    }
+  ],
+  "execute_task": {
+    "operation_id": "execute_task",
+    "name": "ExecuteTask",
+    "description": "Submits a natural-language geospatial task together with a workflow graph to the agent. The task.mode field controls sync, async, or stream execution.",
+    "request_schema": "https://www.geospatial-agentic-services.online/schemas/execute_task_request.schema.json",
+    "response_schema": "https://www.geospatial-agentic-services.online/schemas/task_response.schema.json",
+    "modes": ["sync", "async", "stream"],
+    "task": {
+      "instructions": {
+        "required": true,
+        "description": "Natural-language description of the analysis question the workflow graph is meant to answer."
+      }
+    },
+    "inputs": {
+      "input_datasets": {
+        "required": true,
+        "description": "Data files to be audited and consumed by the workflow (e.g., zipped shapefiles, GeoPackages, GeoJSON, CSVs, rasters). A pre-built workflow graph (.graphml) may also be included; if present, it is used as-is instead of the LLM-generated one.",
+        "supported_item_types": ["URL", "server_path", "encoded_file_object"]
+      }
+    },
+    "outputs": {
+      "artifact_delivery": {
+        "required": false,
+        "default": "URL",
+        "allowed_values": ["URL", "Encoded"],
+        "description": "How generated artifacts are delivered in the standard response."
+      },
+      "primary_artifacts": [
+        {
+          "type": "workflow_execution_result",
+          "formats": ["GeoPackage", "GeoJSON", "CSV", "PNG", "HTML"],
+          "required": true,
+          "description": "One or more files produced by the executed assembly program, written to FINAL_OUTPUT_DIR."
+        }
+      ]
+    },
+    "parameters": {
+      "workflow_graph_path": {
+        "required": false,
+        "description": "Explicit path to a pre-built GraphML workflow file. When provided, the workflow generation stage is skipped and this graph is used directly."
+      },
+      "data_registry": {
+        "required": false,
+        "description": "Optional list of {file, path, shape, columns, head, source} objects describing the available input datasets. When provided, the dataset audit stage is skipped."
+      },
+      "workflow_code": {
+        "required": false,
+        "description": "Optional Python code that built the workflow graph. Provided to the LLM as additional context when generating operation code."
+      },
+      "graph_model": {
+        "required": false,
+        "default": "gpt-4o",
+        "description": "Model used to generate the workflow graph design code."
+      },
+      "operation_model": {
+        "required": false,
+        "default": "gpt-4o",
+        "description": "Model used to generate code for each individual operation node."
+      },
+      "assembly_model": {
+        "required": false,
+        "default": "gpt-5.2",
+        "description": "Model used to assemble all operation functions into a single executable program (also used for repair / regeneration)."
+      }
+    },
+    "credentials": {
+      "required": true,
+      "one_of": ["OPENAI_API_KEY", "GIBD_API_KEY"],
+      "description": "Provide one model execution credential in the request credentials object."
+    }
+  },
+  "conformance": {
+    "gas_version": "1.0.0",
+    "schemas": {
+      "describe_agent": "https://www.geospatial-agentic-services.online/schemas/describe_agent.schema.json",
+      "task_response": "https://www.geospatial-agentic-services.online/schemas/task_response.schema.json",
+      "execute_task_request": "https://www.geospatial-agentic-services.online/schemas/execute_task_request.schema.json"
+    }
+  },
+  "provenance_and_reproducibility": {
+    "provenance": {
+      "supported": true,
+      "description": "Reports per-operation lineage (node_name + description), llm_calls, code execution count, and token usage."
+    },
+    "reproducibility": {
+      "supported": true,
+      "description": "The assembled Python program executed for the task is returned in the script field and persisted to disk alongside its created artifacts."
+    },
+    "validation": {
+      "supported": false,
+      "description": "The agent does not currently perform domain-level validation of the generated workflow; downstream review is recommended."
+    }
+  },
+  "governance": {
+    "access_control": {
+      "description": "Allowed roles set to ['all'] via the extension profile."
+    },
+    "operation_policy": {
+      "description": "Generated code is executed via exec() in a per-task working directory. Outputs are restricted by convention to OUTPUT_DIR and FINAL_OUTPUT_DIR."
+    },
+    "review_policy": {
+      "description": "output_review_required is set to false."
+    },
+    "policy_notes": "If the agent is used, please cite the relevant research on geospatial AI agents."
+  },
+  "extensions": {
+    "description": "This agent ports the SpatialAnalysisExecutor pattern: it converts a NetworkX workflow DAG into a runnable Python program via LLM code generation per operation node, then a single LLM assembly pass, then sandboxed execution."
+  }
+}
