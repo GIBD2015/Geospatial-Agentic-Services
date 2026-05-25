@@ -20,7 +20,8 @@ IMPORTANT: Always set a timeout in Overpass queries using `[timeout:600]` (600 s
 IMPORTANT: Always use POST (not GET) when sending Overpass queries, because GET can fail with large query strings. Use: `requests.post(overpass_url, data={'data': overpass_query}, timeout=660)`. The `timeout=660` on the requests call should be slightly larger than the Overpass `[timeout:...]` value.
 If the primary Overpass endpoint (`https://overpass-api.de/api/interpreter`) returns a 406, 504, 429, or 503 error, retry once with an alternative endpoint: `https://overpass.kumi.systems/api/interpreter`. A 406 from Overpass often means the server rejected the query shape or load; when raising the final error, include `response.text[:1000]` so the debugging step can see the Overpass diagnostic.
 If you need to download the administrative boundary of only one place from OpenStreetMap, please use a Python package named 'OSMnx' by this code line: `gdf = ox.geocode_to_gdf(place_name)`. This method is fast and recommended. You do not need to use Overpass and then parse the reply.
-The overall workflow for fetching data within a place's boundary: 1) get the requested place's osm_id by `osm_id = ox.geocode_to_gdf(place_name)['osm_id'][0]`; 2) form the Overpass query. E.g., `f'relation({osm_id}); map_to_area->.rel; way(area.rel)[railway];'` 3) fetch and save the data.
+Whenever you call any `ox.*` function (for example `ox.geocode_to_gdf`), you MUST import OSMnx at the top of the script with `import osmnx as ox`. Do not assume OSMnx is already imported. If OSMnx is not installed, install it programmatically before importing: `import subprocess, sys; subprocess.check_call([sys.executable, "-m", "pip", "install", "osmnx"])`.
+The overall workflow for fetching data within a place's boundary: 1) get the requested place's osm_id with a version-robust accessor because OSMnx renamed the column between versions (OSMnx 1.x uses `osm_id`, OSMnx >= 2.x uses `osmid`). Use this pattern: `gdf_place = ox.geocode_to_gdf(place_name); osm_id = int(gdf_place["osmid"].iloc[0]) if "osmid" in gdf_place.columns else int(gdf_place["osm_id"].iloc[0])`. 2) form the Overpass query, e.g. `f'relation({osm_id}); map_to_area->.rel; way(area.rel)[railway];'` 3) fetch and save the data. Never write `['osm_id'][0]` or `['osmid'][0]` directly; always check which column exists first.
 The reason of using `ox.geocode_to_gdf()' to get the osm_id is that this function uses Nominatim API to convert the fuzzy place name into a polygon that most match the given place name, rather than exact matching, which may not return the requested polygon.
 For point-of-interest requests such as hospitals, clinics, schools, stores, or restaurants, keep the Overpass query narrow: query only the requested tags such as `nwr(area.rel)["amenity"="hospital"];` or `nwr(area.rel)["healthcare"="hospital"];` and use `out center tags;` or `out body center;`. Do not use broad tag filters or `out geom;` for statewide POI searches unless full polygon boundaries are explicitly required.
 When importing Shapely classes, use `from shapely.geometry import Point, LineString, Polygon, MultiPolygon, shape`. Do not import geometry classes from `shapely.ops`; `shapely.ops` is only for operations such as `linemerge`, `unary_union`, and `polygonize`.
@@ -60,7 +61,9 @@ def download_data():
     # Define Overpass API query to download province boundaries of Cuba
     # This Overpass query is good for multiple polygons.
     # `boundary=ox.place_to_gdf(place)` is to get the first polygon returned by the Nominatim.org API.
-    osm_id = ox.geocode_to_gdf(place_name)['osm_id'][0] # get the osm_id then get the relation by osm_id.
+    # Get the osm_id with a version-robust accessor: OSMnx 1.x uses 'osm_id', OSMnx >= 2.x uses 'osmid'.
+    gdf_place = ox.geocode_to_gdf(place_name)
+    osm_id = int(gdf_place["osmid"].iloc[0]) if "osmid" in gdf_place.columns else int(gdf_place["osm_id"].iloc[0])
 
 
     # IMPORTANT: keep the pipeline to form the Overpass query; it has been manually verified!
