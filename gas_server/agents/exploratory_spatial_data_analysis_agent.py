@@ -37,7 +37,7 @@ NULL_WARNING_THRESHOLD = 0.25
 class ExploratorySpatialDataAnalysisAgent(GeoAgent):
     agent_id = "exploratory_spatial_data_analysis_agent"
     agent_name = "Exploratory Spatial Data Analysis Agent"
-    agent_version = "1.0.0"
+    agent_version = "1.1.0"
     agent_description = (
         "Performs exploratory spatial data analysis (ESDA) on tabular and geospatial datasets. "
         "Surfaces distributions, summary statistics, missing-data patterns, correlations, and "
@@ -202,10 +202,13 @@ class ExploratorySpatialDataAnalysisAgent(GeoAgent):
     ) -> List[Dict[str, str]]:
         system = (
             "You are an expert in exploratory spatial data analysis (ESDA) for tabular and "
-            "geospatial data. Generate a single robust Python script that performs a thorough "
-            "ESDA of the provided dataset(s) and writes BOTH a plain-text summary report and a "
-            "polished HTML report. Stay descriptive and exploratory — surface patterns and "
-            "structure; do not run formal hypothesis tests or models. Use only the provided "
+            "geospatial data. Generate a single robust Python script that performs the analysis "
+            "requested in the Goal and writes BOTH a plain-text summary report and a polished HTML "
+            "report. SCOPE THE WORK TO THE GOAL: when the Goal asks for a specific analysis (e.g. "
+            "spatial autocorrelation), focus on that and omit unrelated sections; only when the Goal "
+            "is generic or open-ended should you perform a comprehensive ESDA. Stay descriptive and "
+            "exploratory — surface patterns and structure; do not run formal hypothesis tests or models. "
+            "Use only the provided "
             "datasets; do not download external data. Use matplotlib with the 'Agg' backend "
             "(import matplotlib; matplotlib.use('Agg')) and never call plt.show(). Save every chart "
             "as a PNG in the directory given by the REPORT_ASSET_DIR environment variable, and "
@@ -230,6 +233,17 @@ Environment variables your script MUST read:
 - HTML_REPORT      -> absolute path to write the HTML report
 - REPORT_ASSET_DIR -> directory to save all chart PNGs (already exists)
 - ESDA_INPUTS      -> JSON list of the input dataset paths
+
+## How to scope this analysis (READ FIRST)
+The numbered items below are a MENU of available analyses, NOT a mandatory checklist.
+- If the Goal names specific analyses (e.g. "spatial autocorrelation", "missing data",
+  "correlation", "distribution of magnitude"), produce ONLY those, plus the minimal supporting
+  context needed to interpret them (e.g. the focal variable's distribution and, for a spatial
+  request, a quick map). OMIT every unrelated section, and say so briefly in the report.
+- If the Goal is generic or open-ended (e.g. "explore", "EDA", "summarize the data", or empty),
+  perform a COMPREHENSIVE ESDA covering every applicable section below.
+- Match the report title and section headings to what you actually produced — do not add empty
+  placeholder sections for analyses the Goal did not request.
 
 ## Non-spatial EDA (where applicable)
 1. Dataset overview: shape, column types, memory, duplicate-row count.
