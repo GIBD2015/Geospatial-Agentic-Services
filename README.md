@@ -9,7 +9,7 @@
 
 This repository provides a reference implementation and developer toolkit for
 the Geospatial Agentic Services (GAS) framework. GAS focuses on geospatial
-interoperability in the era of autonomous GIS and geospatial agents. Its goal
+interoperability in the era of autonomous GIS and geospatial AI agents. Its goal
 is to make geospatial agents, their capabilities, and workflows easier to
 describe, discover, invoke, compose, validate, and reuse across different
 platforms.
