@@ -3,6 +3,13 @@
 This GAS server implementation publishes every GIS agent as a GAS web service.
 Each service gets the same standard operations from the shared service
 framework, while the agent implementation can be completely different.
+The main focus of GAS is interoperability. GAS does not aim to prescribe how
+geospatial agents should be designed, how they should reason, how their
+performance should be improved, or how general agentic systems should be built.
+It also does not assume that all geospatial agents must follow one specific
+architecture, protocol, or implementation pattern. Instead, GAS focuses on the
+interoperability layer needed when heterogeneous geospatial agents and services
+need to work together.
 
 The agents included in this repository are intended to be used as
 implementation examples as well as working services. Before adding a new agent,
