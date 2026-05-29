@@ -411,6 +411,8 @@ def _gas_execute_task_to_run_payload(payload: Dict[str, Any]) -> Dict[str, Any]:
     params.update(metadata)
     params.update(parameters)
     params.update(credentials)
+    if isinstance(payload.get("source_credentials"), dict):
+        params["source_credentials"] = payload["source_credentials"]
 
     if "input_datasets" in inputs:
         params["input_datasets"] = inputs.get("input_datasets")
