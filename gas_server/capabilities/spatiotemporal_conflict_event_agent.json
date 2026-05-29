@@ -1,0 +1,279 @@
+{
+  "$schema": "https://www.geospatial-agentic-services.online/schemas/describe_agent.schema.json",
+  "profile": {
+    "agent_id": "spatiotemporal_conflict_event_agent",
+    "name": "Spatiotemporal Conflict Event Layer Agent",
+    "description": "A GMU/STC agent that transforms unstructured conflict reports or structured event tables into standardized, GIS-ready spatiotemporal event layers. It extracts or validates event locations, dates, categories, evidence, and coordinates, then returns clean CSV, GeoJSON, and report artifacts for downstream mapping, spatial analysis, spatial statistics, and web mapping workflows.",
+    "version": "1.0.0",
+    "base_url": "https://www.geospatial-agentic-services.online/agents/spatiotemporal_conflict_event_agent",
+    "last_updated": "2026-05-27",
+    "provider": {
+      "name": "Spatiotemporal Innovation Center at George Mason University",
+      "website": "https://www.stcenter.net/",
+      "contacts": [
+        {
+          "name": "Yahya Masri",
+          "email": "ymasri@gmu.edu"
+        }
+      ]
+    },
+    "default_model": "gpt-5.2"
+  },
+  "keywords": [
+    "conflict events",
+    "event extraction",
+    "spatiotemporal event layer",
+    "GeoJSON",
+    "CSV",
+    "incident mapping",
+    "geocoding",
+    "news to GIS",
+    "event data",
+    "armed conflict"
+  ],
+  "skills": [
+    {
+      "skill_id": "spatiotemporal_event_extraction",
+      "name": "Spatiotemporal Event Extraction",
+      "description": "Extracts primary armed conflict or security incidents from unstructured article text when model credentials are supplied, normalizing locations, dates, categories, descriptions, and evidence quotes into a GIS-ready event schema.",
+      "constraints": {
+        "spatial": "Extracted locations are normalized as place names and become GeoJSON points only when valid coordinates are provided or successfully geocoded.",
+        "temporal": "Dates are normalized to YYYY-MM-DD when possible; ambiguous or missing dates are retained as partial records for review.",
+        "other": [
+          "LLM extraction focuses on primary incident locations, not diplomatic or background mentions.",
+          "The agent accepts the full GCADT conflict category set but emphasizes common armed conflict categories in extraction prompts.",
+          "Evidence quotes are checked against the source text when raw article input is used."
+        ]
+      }
+    },
+    {
+      "skill_id": "event_table_normalization",
+      "name": "Event Table Normalization",
+      "description": "Reads CSV, JSON, GeoJSON, and common vector event-like inputs, detects likely event field columns, normalizes records to the standard event_id, location, date, category, description, evidence_quote, latitude, longitude, source_name, source_url, geocode_status, and validation_status schema, then deduplicates records by location/date/category.",
+      "constraints": {
+        "spatial": "Structured inputs with latitude/longitude columns or point GeoJSON geometries can be converted to point GeoJSON without geocoding credentials.",
+        "temporal": "Date fields are parsed using common ISO, slash, dash, and natural-language date formats.",
+        "other": [
+          "Structured input with clear columns does not require model credentials.",
+          "Deduplication is request-local and does not use a persistent database."
+        ]
+      }
+    },
+    {
+      "skill_id": "event_geocoding",
+      "name": "Event Geocoding",
+      "description": "Optionally geocodes missing event coordinates with OpenCage when OPENCAGE_API_KEY or source_credentials.OPENCAGE.key is supplied. Records without coordinates remain in CSV and reports but are omitted from GeoJSON point features.",
+      "constraints": {
+        "spatial": "GeoJSON coordinates are emitted as [longitude, latitude]. Coordinates outside valid WGS84 latitude/longitude ranges are rejected.",
+        "temporal": null,
+        "other": [
+          "OpenCage geocoding is best-effort and cached only in memory for one request.",
+          "No OpenCage key is required when structured inputs already contain valid coordinates."
+        ]
+      }
+    },
+    {
+      "skill_id": "geojson_layer_generation",
+      "name": "GeoJSON Layer Generation",
+      "description": "Generates a GeoJSON FeatureCollection containing one Point feature per event with valid coordinates, while preserving all records in the companion CSV event table.",
+      "constraints": {
+        "spatial": "Records without valid latitude and longitude are excluded from the point layer and reported under records missing coordinates.",
+        "temporal": null,
+        "other": [
+          "The GeoJSON layer is intended for downstream GAS Mapping, Web Mapping App, Spatial Analysis, and Spatial Statistics agents."
+        ]
+      }
+    },
+    {
+      "skill_id": "event_report_generation",
+      "name": "Event Report Generation",
+      "description": "Writes a TXT report, HTML report, optional Folium HTML map, and optional invalid-record CSV summarizing event counts, geocoding readiness, duplicates, categories, locations, warnings, and credential limitations.",
+      "constraints": {
+        "spatial": "The optional HTML map is created only when at least one event has valid coordinates.",
+        "temporal": null,
+        "other": [
+          "QGIS, Neo4j, SQLite, RSS polling, frontend services, and continuous monitoring are intentionally out of scope for this V1 GAS agent."
+        ]
+      }
+    }
+  ],
+  "execute_task": {
+    "operation_id": "execute_task",
+    "name": "ExecuteTask",
+    "description": "Submits a natural-language task to convert unstructured conflict text or structured event tables into GIS-ready spatiotemporal event layers. The task.mode field controls sync, async, or stream execution.",
+    "request_schema": "https://www.geospatial-agentic-services.online/schemas/execute_task_request.schema.json",
+    "response_schema": "https://www.geospatial-agentic-services.online/schemas/task_response.schema.json",
+    "modes": [
+      "sync",
+      "async",
+      "stream"
+    ],
+    "task": {
+      "instructions": {
+        "required": true,
+        "description": "Natural-language task instructions. For raw article extraction, include the article text in task.instructions or provide a TXT/MD input dataset."
+      }
+    },
+    "inputs": {
+      "input_datasets": {
+        "required": false,
+        "description": "Optional array of structured event datasets or text files. Supported structured formats include CSV, TSV, JSON, GeoJSON, and common vector formats readable by GeoPandas. Each item may be an HTTP/HTTPS URL, server-accessible path, or base64-encoded file object with filename, data, and optional mime_type.",
+        "supported_item_types": [
+          "URL",
+          "server_path",
+          "encoded_file_object"
+        ],
+        "supported_formats": [
+          "CSV",
+          "TSV",
+          "JSON",
+          "GeoJSON",
+          "TXT",
+          "MD",
+          "GPKG",
+          "SHP",
+          "GML",
+          "KML"
+        ]
+      }
+    },
+    "outputs": {
+      "artifact_delivery": {
+        "required": false,
+        "default": "URL",
+        "allowed_values": [
+          "URL",
+          "Encoded"
+        ],
+        "description": "How generated artifacts are delivered in the standard response: 'URL' (default) or 'Encoded'."
+      },
+      "primary_artifacts": [
+        {
+          "type": "event_table",
+          "formats": [
+            "CSV"
+          ],
+          "required": true,
+          "description": "Standardized event table using the event_id, location, date, category, description, evidence_quote, latitude, longitude, source_name, source_url, geocode_status, and validation_status schema."
+        },
+        {
+          "type": "event_layer",
+          "formats": [
+            "GeoJSON"
+          ],
+          "required": true,
+          "description": "GeoJSON FeatureCollection with Point features for records that have valid coordinates."
+        },
+        {
+          "type": "summary_report",
+          "formats": [
+            "TXT",
+            "HTML"
+          ],
+          "required": true,
+          "description": "Reports event counts, geocoding readiness, duplicate removal, categories, locations, warnings, and credential limitations."
+        },
+        {
+          "type": "event_map",
+          "formats": [
+            "HTML"
+          ],
+          "required": false,
+          "description": "Optional Folium HTML map generated when at least one event has valid coordinates."
+        }
+      ]
+    },
+    "parameters": {
+      "model": {
+        "required": false,
+        "default": "gpt-5.2",
+        "description": "Optional model override. If omitted, the agent uses its default model for raw unstructured text extraction. Structured table normalization with clear columns does not require model credentials."
+      },
+      "requested_skill": {
+        "required": false,
+        "description": "Advanced optional skill-selection hint. Most clients should omit this."
+      },
+      "source_credentials": {
+        "required": false,
+        "description": "Optional source credential object. Use source_credentials.OPENCAGE.key to geocode records missing coordinates."
+      }
+    },
+    "credentials": {
+      "required": false,
+      "one_of": [
+        "none",
+        "OPENAI_API_KEY",
+        "GIBD_API_KEY"
+      ],
+      "description": "No API key is required for structured event tables that already contain clear fields and valid coordinates. LLM extraction from unstructured text requires OPENAI_API_KEY or GIBD_API_KEY. Geocoding missing coordinates requires OPENCAGE_API_KEY or source_credentials.OPENCAGE.key."
+    }
+  },
+  "conformance": {
+    "gas_version": "1.0.0",
+    "schemas": {
+      "describe_agent": "https://www.geospatial-agentic-services.online/schemas/describe_agent.schema.json",
+      "task_response": "https://www.geospatial-agentic-services.online/schemas/task_response.schema.json",
+      "execute_task_request": "https://www.geospatial-agentic-services.online/schemas/execute_task_request.schema.json"
+    }
+  },
+  "provenance_and_reproducibility": {
+    "provenance": {
+      "supported": true,
+      "description": "Includes input mode, materialized dataset paths, extracted event count, duplicate count, geocoding status, generated artifacts, optional LLM usage, and warnings."
+    },
+    "reproducibility": {
+      "supported": true,
+      "description": "Structured table normalization, validation, deduplication, CSV, GeoJSON, and report generation are deterministic. Raw text extraction is model-backed only when credentials are supplied; OpenCage geocoding is optional and request-scoped."
+    },
+    "validation": {
+      "supported": true,
+      "description": "Validates locations, dates, allowed conflict categories, evidence quote grounding for article text, coordinate ranges, duplicate records, and coordinate readiness for GeoJSON feature creation."
+    }
+  },
+  "governance": {
+    "access_control": {
+      "description": "Allowed roles set to ['all'] via the extension profile. No role-based access control is enforced."
+    },
+    "operation_policy": {
+      "description": "The agent reads supplied task text and datasets, creates request-scoped output artifacts, and does not write to persistent event databases. It does not poll RSS feeds, contact frontend services, query Neo4j, or require QGIS."
+    },
+    "review_policy": {
+      "description": "Conflict event extraction and geocoding are advisory. Human review is recommended before using extracted incident layers for high-impact operational, legal, or humanitarian decisions."
+    },
+    "policy_notes": "Outputs may contain sensitive conflict-event information from user-provided text or datasets. Clients should avoid submitting protected personal data unless they have authority to process it."
+  },
+  "extensions": {
+    "description": "This GMU/STC agent packages lightweight GCADT automapping concepts as a focused GAS preprocessing service. It transforms messy conflict text or event tables into clean CSV, GeoJSON, TXT, HTML, and optional map artifacts that downstream GAS agents can consume.",
+    "output_schema": [
+      "event_id",
+      "location",
+      "date",
+      "category",
+      "description",
+      "evidence_quote",
+      "latitude",
+      "longitude",
+      "source_name",
+      "source_url",
+      "geocode_status",
+      "validation_status"
+    ],
+    "data_source_credentials": {
+      "parameter": "source_credentials.OPENCAGE.key",
+      "description": "OpenCage geocoding credentials are optional and only needed for records that lack latitude/longitude."
+    },
+    "excluded_v1_features": [
+      "RSS polling",
+      "FastAPI endpoints",
+      "Next.js frontend",
+      "Server-Sent Events dashboard",
+      "SQLite monitor database",
+      "Neo4j country boundary lookup",
+      "QGIS/PyQGIS rendering",
+      "live news streams",
+      "YouTube logic",
+      "continuous background monitor",
+      "Vercel deployment logic"
+    ]
+  }
+}
