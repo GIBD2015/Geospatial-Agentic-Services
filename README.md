@@ -1,6 +1,6 @@
-<img align="left" src="docs/assets/gas-logo.png" alt="Geospatial Agentic Services logo" width="110">
+<img align="left" src="docs/assets/gas-logo.png" alt="Geospatial Agentic Services logo" width="125">
 
-# Geospatial Agentic Services (GAS)
+### Geospatial Agentic Services (GAS)
 
 <p>
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-yellow.svg" alt="License: MIT"></a>
