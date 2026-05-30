@@ -6,6 +6,8 @@ repo_name: GIBD2015/geospatial-agentic-services
 
 theme:
   name: material
+  logo: assets/gas-logo.png
+  favicon: assets/gas-logo.png
   features:
     - navigation.sections
     - navigation.indexes

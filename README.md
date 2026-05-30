@@ -1,5 +1,9 @@
 # Geospatial Agentic Services (GAS)
 
+<p align="center">
+  <img src="docs/assets/gas-logo.png" alt="Geospatial Agentic Services logo" width="220">
+</p>
+
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Python](https://img.shields.io/badge/Python-3.10%2B-blue.svg)](pyproject.toml)
 [![GAS Client on PyPI](https://img.shields.io/pypi/v/gas-client.svg)](https://pypi.org/project/gas-client/)
