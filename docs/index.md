@@ -3,9 +3,13 @@
   <h1>GAS - Geospatial Agentic Services</h1>
 </div>
 
-Geospatial Agentic Services (GAS) is an interoperability framework for
-discovering, describing, invoking, composing, validating, and reusing
-geospatial agents and services.
+Geospatial Agentic Services, or GAS, is a service-oriented framework for
+publishing, discovering, invoking, and composing GIS agents as interoperable
+geospatial services. GAS extends traditional geospatial interoperability beyond
+access to data and predefined operations toward geospatial intelligence
+interoperability, where GIS agents function as discoverable, reusable, and
+collaborative service entities that encapsulate spatial knowledge and
+reasoning.
 
 GAS focuses on geospatial interoperability in the era of autonomous GIS and
 geospatial AI agents. It provides a way for heterogeneous geospatial agents to
