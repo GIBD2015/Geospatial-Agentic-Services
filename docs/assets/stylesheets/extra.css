@@ -1,15 +1,38 @@
+.gas-home-hero {
+  display: flex;
+  align-items: center;
+  gap: 1.25rem;
+  margin-bottom: 1.5rem;
+}
+
+.gas-home-hero img {
+  width: 125px;
+  height: auto;
+  flex: 0 0 auto;
+}
+
+.gas-home-hero h1 {
+  margin: 0;
+  font-weight: 800;
+}
+
+.md-sidebar .md-nav__item--section > .md-nav__link {
+  font-size: 0.78rem;
+  font-weight: 700;
+}
+
 .md-content h2 {
   color: #0067b1;
-  font-size: 1.9rem;
+  font-size: 1.45rem;
   font-weight: 700;
-  margin-top: 2.4rem;
+  margin-top: 2rem;
 }
 
 .md-content h2::after {
   content: "";
   display: block;
-  width: 3.5rem;
-  height: 0.18rem;
+  width: 2.75rem;
+  height: 0.14rem;
   margin-top: 0.35rem;
   background: #16b8bd;
   border-radius: 999px;
