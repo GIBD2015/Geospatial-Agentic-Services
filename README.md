@@ -1,21 +1,17 @@
-<table>
-  <tr>
-    <td width="120">
-      <img src="docs/assets/gas-logo.png" alt="Geospatial Agentic Services logo" width="110">
-    </td>
-    <td>
-      <h1>Geospatial Agentic Services (GAS)</h1>
-      <p>
-        <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-yellow.svg" alt="License: MIT"></a>
-        <a href="pyproject.toml"><img src="https://img.shields.io/badge/Python-3.10%2B-blue.svg" alt="Python 3.10+"></a>
-        <a href="https://pypi.org/project/gas-client/"><img src="https://img.shields.io/pypi/v/gas-client.svg" alt="GAS Client on PyPI"></a>
-        <a href="http://geospatial-agentic-services.online/registry"><img src="https://img.shields.io/badge/GAS-Registry-256b7f.svg" alt="GAS Registry"></a>
-        <a href="https://www.researchgate.net/publication/404738967_Geospatial_Agentic_Services_A_Framework_for_Interoperable_Geospatial_Intelligence"><img src="https://img.shields.io/badge/GAS-Paper-green.svg" alt="GAS Paper"></a>
-        <a href="https://giscience.psu.edu/"><img src="https://img.shields.io/badge/GIBD-Lab-lightgrey.svg" alt="GIBD Lab"></a>
-      </p>
-    </td>
-  </tr>
-</table>
+<img align="left" src="docs/assets/gas-logo.png" alt="Geospatial Agentic Services logo" width="110">
+
+# Geospatial Agentic Services (GAS)
+
+<p>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-yellow.svg" alt="License: MIT"></a>
+  <a href="pyproject.toml"><img src="https://img.shields.io/badge/Python-3.10%2B-blue.svg" alt="Python 3.10+"></a>
+  <a href="https://pypi.org/project/gas-client/"><img src="https://img.shields.io/pypi/v/gas-client.svg" alt="GAS Client on PyPI"></a>
+  <a href="http://geospatial-agentic-services.online/registry"><img src="https://img.shields.io/badge/GAS-Registry-256b7f.svg" alt="GAS Registry"></a>
+  <a href="https://www.researchgate.net/publication/404738967_Geospatial_Agentic_Services_A_Framework_for_Interoperable_Geospatial_Intelligence"><img src="https://img.shields.io/badge/GAS-Paper-green.svg" alt="GAS Paper"></a>
+  <a href="https://giscience.psu.edu/"><img src="https://img.shields.io/badge/GIBD-Lab-lightgrey.svg" alt="GIBD Lab"></a>
+</p>
+
+<br clear="left">
 
 This repository provides a reference implementation and developer toolkit for
 the Geospatial Agentic Services (GAS) framework. GAS focuses on geospatial
