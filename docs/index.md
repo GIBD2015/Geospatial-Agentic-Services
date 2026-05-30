@@ -8,6 +8,27 @@ Geospatial Agentic Services (GAS) is an interoperability framework for
 discovering, describing, invoking, composing, validating, and reusing
 geospatial agents and services.
 
+GAS focuses on geospatial interoperability in the era of autonomous GIS and
+geospatial AI agents. It provides a way for heterogeneous geospatial agents to
+publish machine-readable capability documents, expose standard task operations,
+return reusable artifacts, and participate in larger distributed workflows.
+
+GAS does not prescribe how geospatial agents should be designed, how they
+should reason, how their performance should be improved, or how general
+agentic systems should be built. Instead, it focuses on the shared service
+contracts needed when different geospatial agents, applications, notebooks, and
+AI orchestrators need to work together.
+
+This repository provides a reference GAS server, a Python client SDK, a GAS
+Registry web app, example notebooks, interface schemas, developer
+documentation, and working reference agent implementations. The public
+[GAS Registry](http://geospatial-agentic-services.online/registry) catalogs
+published GAS services by reading their `GetCapabilities` and `DescribeAgent`
+documents.
+
+For the broader conceptual framework, see the
+[GAS paper](https://www.researchgate.net/publication/404738967_Geospatial_Agentic_Services_A_Framework_for_Interoperable_Geospatial_Intelligence).
+
 This documentation site is organized around four entry points and a compact
 set of core references.
 
