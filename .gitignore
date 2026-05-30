@@ -21,6 +21,7 @@ examples_for_using_gas_services/downloaded_gas_artifacts/
 build/
 dist/
 *.egg-info/
+site/
 
 packages/gas-client/build/
 packages/gas-client/dist/

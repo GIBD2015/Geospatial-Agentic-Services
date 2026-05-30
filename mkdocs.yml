@@ -1,0 +1,55 @@
+site_name: Geospatial Agentic Services
+site_description: Documentation for the Geospatial Agentic Services framework and reference implementation.
+site_url: https://GIBD2015.github.io/geospatial-agentic-services/
+repo_url: https://github.com/GIBD2015/geospatial-agentic-services
+repo_name: GIBD2015/geospatial-agentic-services
+
+theme:
+  name: material
+  features:
+    - navigation.sections
+    - navigation.indexes
+    - navigation.top
+    - search.highlight
+    - search.suggest
+    - content.code.copy
+
+nav:
+  - Home: index.md
+  - Choose Your Path:
+      - Use Published GAS Services: gas_client_sdk.md
+      - Add A Geospatial Agentic Service: adding_an_agent_service.md
+      - Host A GAS Server: development_and_deployment_environment.md
+      - Improve the Codebase: contributing.md
+  - Concepts:
+      - GAS Interfaces: gas_interfaces.md
+      - GAS Server Framework: gas_server_architecture.md
+      - Included Agents: included_agents.md
+  - Guides:
+      - GAS Client SDK: gas_client_sdk.md
+      - GAS Registry: gas_registry.md
+      - Development and Deployment: development_and_deployment_environment.md
+  - Reference:
+      - Adding an Agent Service: adding_an_agent_service.md
+      - Contributing: contributing.md
+      - Security: security.md
+
+markdown_extensions:
+  - admonition
+  - attr_list
+  - md_in_html
+  - pymdownx.details
+  - pymdownx.highlight:
+      anchor_linenums: true
+  - pymdownx.superfences:
+      custom_fences:
+        - name: mermaid
+          class: mermaid
+          format: !!python/name:pymdownx.superfences.fence_code_format
+  - pymdownx.tabbed:
+      alternate_style: true
+  - toc:
+      permalink: true
+
+plugins:
+  - search
