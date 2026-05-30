@@ -1,11 +1,21 @@
-# Geospatial Agentic Services (GAS)
-
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
-[![Python](https://img.shields.io/badge/Python-3.10%2B-blue.svg)](pyproject.toml)
-[![GAS Client on PyPI](https://img.shields.io/pypi/v/gas-client.svg)](https://pypi.org/project/gas-client/)
-[![GAS Registry](https://img.shields.io/badge/GAS-Registry-256b7f.svg)](http://geospatial-agentic-services.online/registry)
-[![GAS Paper](https://img.shields.io/badge/GAS-Paper-green.svg)](https://www.researchgate.net/publication/404738967_Geospatial_Agentic_Services_A_Framework_for_Interoperable_Geospatial_Intelligence)
-[![GIBD Lab](https://img.shields.io/badge/GIBD-Lab-lightgrey.svg)](https://giscience.psu.edu/)
+<table>
+  <tr>
+    <td width="120">
+      <img src="docs/assets/gas-logo.png" alt="Geospatial Agentic Services logo" width="110">
+    </td>
+    <td>
+      <h1>Geospatial Agentic Services (GAS)</h1>
+      <p>
+        <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-yellow.svg" alt="License: MIT"></a>
+        <a href="pyproject.toml"><img src="https://img.shields.io/badge/Python-3.10%2B-blue.svg" alt="Python 3.10+"></a>
+        <a href="https://pypi.org/project/gas-client/"><img src="https://img.shields.io/pypi/v/gas-client.svg" alt="GAS Client on PyPI"></a>
+        <a href="http://geospatial-agentic-services.online/registry"><img src="https://img.shields.io/badge/GAS-Registry-256b7f.svg" alt="GAS Registry"></a>
+        <a href="https://www.researchgate.net/publication/404738967_Geospatial_Agentic_Services_A_Framework_for_Interoperable_Geospatial_Intelligence"><img src="https://img.shields.io/badge/GAS-Paper-green.svg" alt="GAS Paper"></a>
+        <a href="https://giscience.psu.edu/"><img src="https://img.shields.io/badge/GIBD-Lab-lightgrey.svg" alt="GIBD Lab"></a>
+      </p>
+    </td>
+  </tr>
+</table>
 
 This repository provides a reference implementation and developer toolkit for
 the Geospatial Agentic Services (GAS) framework. GAS focuses on geospatial
@@ -491,7 +501,3 @@ software components, registries, and GAS-compatible agent services.
 ## License
 
 This repository is released under the MIT License. See [LICENSE](LICENSE).
-
-<p align="center">
-  <img src="docs/assets/gas-logo.png" alt="Geospatial Agentic Services logo" width="220">
-</p>
