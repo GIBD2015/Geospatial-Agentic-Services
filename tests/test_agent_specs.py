@@ -807,6 +807,71 @@ def test_vector_analysis_attribute_join_uses_deterministic_fast_path(tmp_path):
     assert any(event.get("stage") == "input_inspection" for event in events)
 
 
+def test_vector_analysis_explicit_llm_request_skips_deterministic_fast_path(tmp_path):
+    gpd = pytest.importorskip("geopandas")
+    pd = pytest.importorskip("pandas")
+    shapely_geometry = pytest.importorskip("shapely.geometry")
+
+    counties_path = tmp_path / "counties.gpkg"
+    obesity_path = tmp_path / "obesity.csv"
+    counties = gpd.GeoDataFrame(
+        {
+            "GEOID": ["01001"],
+            "geometry": [shapely_geometry.box(0, 0, 1, 1)],
+        },
+        crs="EPSG:4326",
+    )
+    counties.to_file(counties_path, driver="GPKG")
+    pd.DataFrame({"county_fips": [1001], "value": [31.2]}).to_csv(obesity_path, index=False)
+
+    agent = VectorAnalysisAgent(api_key=None)
+    events = []
+    result = agent._try_deterministic_workflow(
+        "Join these datasets, name the joined value column obesity_rate, and use LLM for this task.",
+        [str(counties_path), str(obesity_path)],
+        start_time=0,
+        progress_callback=events.append,
+    )
+
+    assert result is None
+    assert any("model-driven" in event.get("message", "") for event in events)
+
+
+def test_vector_analysis_deterministic_join_honors_requested_value_column_name(tmp_path):
+    gpd = pytest.importorskip("geopandas")
+    pd = pytest.importorskip("pandas")
+    shapely_geometry = pytest.importorskip("shapely.geometry")
+
+    counties_path = tmp_path / "counties.gpkg"
+    obesity_path = tmp_path / "obesity.csv"
+    counties = gpd.GeoDataFrame(
+        {
+            "GEOID": ["01001", "01003"],
+            "geometry": [shapely_geometry.box(i, 0, i + 1, 1) for i in range(2)],
+        },
+        crs="EPSG:4326",
+    )
+    counties.to_file(counties_path, driver="GPKG")
+    pd.DataFrame(
+        {
+            "countyfips": [1001, 1003],
+            "Data_Value": [31.2, 28.5],
+        }
+    ).to_csv(obesity_path, index=False)
+
+    agent = VectorAnalysisAgent(api_key=None)
+    agent.output_dir = str(tmp_path)
+    result = agent.run(
+        "Join the county dataset with the obesity table. Name joined obesity value column to obesity_rate. Return GeoPackage.",
+        [str(counties_path), str(obesity_path)],
+    )
+
+    joined = gpd.read_file(result["outputs"]["dataset_path"])
+    assert "obesity_rate" in joined.columns
+    assert "Data_Value" not in joined.columns
+    assert joined["obesity_rate"].tolist() == [31.2, 28.5]
+
+
 def test_vector_analysis_buffer_uses_deterministic_fast_path(tmp_path):
     gpd = pytest.importorskip("geopandas")
     shapely_geometry = pytest.importorskip("shapely.geometry")
@@ -874,6 +939,149 @@ def test_vector_analysis_point_count_by_polygon_uses_deterministic_fast_path(tmp
     output = gpd.read_file(result["outputs"]["dataset_path"])
     assert output["hospital_count"].tolist() == [2, 1, 0]
     assert any(event.get("data", {}).get("operation") == "point_count_by_polygon" for event in events)
+
+
+def test_vector_analysis_point_count_repairs_degree_coordinates_with_projected_crs(tmp_path):
+    gpd = pytest.importorskip("geopandas")
+    shapely_geometry = pytest.importorskip("shapely.geometry")
+
+    counties_path = tmp_path / "counties_bad_crs.gpkg"
+    hospitals_path = tmp_path / "hospitals.geojson"
+
+    counties = gpd.GeoDataFrame(
+        {
+            "county_name": ["A", "B"],
+            "geometry": [
+                shapely_geometry.box(-80.0, 40.0, -79.0, 41.0),
+                shapely_geometry.box(-79.0, 40.0, -78.0, 41.0),
+            ],
+        },
+        crs="EPSG:3857",
+    )
+    counties.to_file(counties_path, driver="GPKG")
+
+    hospitals = gpd.GeoDataFrame(
+        {
+            "hospital_name": ["H1", "H2", "H3"],
+            "geometry": [
+                shapely_geometry.Point(-79.75, 40.25),
+                shapely_geometry.Point(-79.25, 40.75),
+                shapely_geometry.Point(-78.75, 40.25),
+            ],
+        },
+        crs="EPSG:4326",
+    )
+    hospitals.to_file(hospitals_path, driver="GeoJSON")
+
+    agent = VectorAnalysisAgent(api_key=None)
+    agent.output_dir = str(tmp_path)
+    result = agent.run(
+        "Count the number of hospital points in each county and return hospital_count.",
+        [str(counties_path), str(hospitals_path)],
+    )
+
+    output = gpd.read_file(result["outputs"]["dataset_path"])
+    assert output.crs.to_epsg() == 4326
+    assert output["hospital_count"].tolist() == [2, 1]
+
+
+def test_vector_analysis_buffered_point_coverage_uses_requested_workflow_and_ignores_extra_layer(tmp_path):
+    gpd = pytest.importorskip("geopandas")
+    shapely_geometry = pytest.importorskip("shapely.geometry")
+    pytest.importorskip("numpy")
+
+    counties_path = tmp_path / "counties.gpkg"
+    hospitals_path = tmp_path / "hospitals.geojson"
+    highways_path = tmp_path / "highways.geojson"
+
+    counties = gpd.GeoDataFrame(
+        {
+            "GEOID": ["A", "B"],
+            "NAME": ["County A", "County B"],
+            "geometry": [
+                shapely_geometry.box(0, 0, 20_000, 20_000),
+                shapely_geometry.box(30_000, 0, 50_000, 20_000),
+            ],
+        },
+        crs="EPSG:5070",
+    )
+    counties.to_file(counties_path, driver="GPKG")
+
+    hospitals = gpd.GeoDataFrame(
+        {
+            "name": ["Hospital A"],
+            "geometry": [shapely_geometry.Point(10_000, 10_000)],
+        },
+        crs="EPSG:5070",
+    )
+    hospitals.to_file(hospitals_path, driver="GeoJSON")
+
+    highways = gpd.GeoDataFrame(
+        {
+            "road": ["unused"],
+            "geometry": [shapely_geometry.LineString([(0, 0), (50_000, 20_000)])],
+        },
+        crs="EPSG:5070",
+    )
+    highways.to_file(highways_path, driver="GeoJSON")
+
+    agent = VectorAnalysisAgent(api_key=None)
+    agent.output_dir = str(tmp_path)
+    result = agent.run(
+        (
+            "Compute hospital accessibility per county using the provided layers. "
+            "Inputs: (1) county polygons, (2) hospital points, (3) highways not used, ignore. "
+            "Reproject counties and hospitals to EPSG:5070. Buffer each hospital by 10000 meters, "
+            "dissolve all buffers into one coverage polygon, intersect with each county, compute "
+            "covered_area_m2, county_area_m2, and coverage_pct = covered_area_m2 / county_area_m2 * 100. "
+            "Return one GeoPackage of counties with GEOID, NAME, and coverage_pct."
+        ),
+        [str(counties_path), str(hospitals_path), str(highways_path)],
+    )
+
+    output = gpd.read_file(result["outputs"]["dataset_path"]).sort_values("GEOID").reset_index(drop=True)
+    assert output.crs.to_epsg() == 4326
+    assert {"GEOID", "NAME", "covered_area_m2", "county_area_m2", "coverage_pct"}.issubset(output.columns)
+    assert output.loc[0, "coverage_pct"] == pytest.approx(78.5, abs=1.0)
+    assert output.loc[1, "coverage_pct"] == pytest.approx(0.0)
+
+
+def test_vector_analysis_validation_rejects_area_only_result_for_coverage_request(tmp_path):
+    gpd = pytest.importorskip("geopandas")
+    shapely_geometry = pytest.importorskip("shapely.geometry")
+
+    output_path = tmp_path / "wrong_result.gpkg"
+    wrong = gpd.GeoDataFrame(
+        {
+            "GEOID": ["A"],
+            "NAME": ["County A"],
+            "area_sq_m": [100.0],
+            "area_sq_km": [0.0001],
+            "geometry": [shapely_geometry.box(0, 0, 1, 1)],
+        },
+        crs="EPSG:4326",
+    )
+    wrong.to_file(output_path, driver="GPKG")
+
+    agent = VectorAnalysisAgent(api_key=None)
+    result = {
+        "outputs": {
+            "dataset_path": str(output_path),
+            "text": "Added geometry measurement field(s): area_sq_m, area_sq_km.",
+        },
+        "script": "# Loaded vector data, projected to a measurement CRS, calculated requested geometry fields.",
+    }
+    errors = agent._deterministic_result_validation_errors(
+        (
+            "Buffer hospitals by 10000 meters, dissolve buffers, intersect with counties, "
+            "and compute covered_area_m2, county_area_m2, and coverage_pct."
+        ),
+        result,
+    )
+
+    assert any("coverage_pct" in error for error in errors)
+    assert any("buffer" in error for error in errors)
+    assert any("intersect" in error for error in errors)
 
 
 def test_vector_analysis_dissolve_uses_deterministic_fast_path(tmp_path):
@@ -1231,9 +1439,28 @@ def test_pasda_agent_directly_matches_county_boundary_requests(monkeypatch):
     )
 
     assert matched is True
-    assert calls == [("PennDOT", 7, "Download PA county boundaries")]
+    assert calls == [("pasda/PennDOT", 7, "Download PA county boundaries")]
     assert events[0]["stage"] == "source_selection"
     assert events[-1]["stage"] == "download_complete"
+
+
+def test_pasda_agent_directly_matches_pennsylvania_counties_without_boundary_word(monkeypatch):
+    agent = PasdaAgent(api_key=None)
+    calls = []
+
+    def fake_download_data(service_name, layer_id, user_query):
+        calls.append((service_name, layer_id, user_query))
+        agent.downloaded.append("Data/pasda/pa_counties.gpkg")
+        agent.feature_counts["Data/pasda/pa_counties.gpkg"] = 67
+        agent.summary = "Pennsylvania county boundaries."
+        return '{"status": "success", "feature_count": 67}'
+
+    monkeypatch.setattr(agent, "download_data", fake_download_data)
+
+    matched = agent._try_direct_pasda_download("Download Pennsylvania counties")
+
+    assert matched is True
+    assert calls == [("pasda/PennDOT", 7, "Download Pennsylvania counties")]
 
 
 def test_pasda_agent_directly_matches_hospital_requests(monkeypatch):
@@ -1253,6 +1480,34 @@ def test_pasda_agent_directly_matches_hospital_requests(monkeypatch):
 
     assert matched is True
     assert calls == [("pasda/DepHealth", 6, "Download Pennsylvania hospitals from PASDA")]
+
+
+@pytest.mark.parametrize(
+    ("query", "expected_layer_id"),
+    [
+        ("Download Pennsylvania school district boundaries", 11),
+        ("Download Pennsylvania municipal boundaries", 10),
+        ("Download Pennsylvania state boundary", 13),
+        ("Download Pennsylvania state roads", 4),
+    ],
+)
+def test_pasda_agent_directly_matches_common_statewide_penndot_layers(monkeypatch, query, expected_layer_id):
+    agent = PasdaAgent(api_key=None)
+    calls = []
+
+    def fake_download_data(service_name, layer_id, user_query):
+        calls.append((service_name, layer_id, user_query))
+        agent.downloaded.append("Data/pasda/output.gpkg")
+        agent.feature_counts["Data/pasda/output.gpkg"] = 1
+        agent.summary = "Downloaded PASDA layer."
+        return '{"status": "success", "feature_count": 1}'
+
+    monkeypatch.setattr(agent, "download_data", fake_download_data)
+
+    matched = agent._try_direct_pasda_download(query)
+
+    assert matched is True
+    assert calls == [("pasda/PennDOT", expected_layer_id, query)]
 
 
 def test_pasda_agent_caches_repeated_service_metadata(monkeypatch):
@@ -1283,4 +1538,34 @@ def test_pasda_agent_caches_repeated_service_metadata(monkeypatch):
     assert len(calls) == 1
     assert first["layers"][0]["name"] == "Hospitals"
     assert second["cached"] is True
+
+
+def test_pasda_agent_normalizes_common_service_names_and_urls():
+    agent = PasdaAgent(api_key=None)
+
+    assert agent._normalize_service_name("PennDOT") == "pasda/PennDOT"
+    assert agent._normalize_service_name("PASDA/PennDOT ") == "pasda/PennDOT"
+    assert agent._normalize_service_name("pasda/penndot/MapServer") == "pasda/PennDOT"
+    assert (
+        agent._normalize_service_name(
+            "https://mapservices.pasda.psu.edu/server/rest/services/pasda/DepHealth/MapServer"
+        )
+        == "pasda/DepHealth"
+    )
+
+
+def test_pasda_agent_metadata_details_are_deterministic_without_llm():
+    agent = PasdaAgent(api_key=None)
+    details = agent._details_from_arcgis_metadata(
+        {
+            "name": "Pa County 2026_04",
+            "geometryType": "esriGeometryPolygon",
+            "description": "<p>County boundaries within Pennsylvania.</p>",
+            "extent": {"spatialReference": {"wkid": 4269}},
+        }
+    )
+
+    assert details["crs"] == "EPSG:4269"
+    assert details["geometry_type"] == "esriGeometryPolygon"
+    assert details["description"] == "County boundaries within Pennsylvania."
 

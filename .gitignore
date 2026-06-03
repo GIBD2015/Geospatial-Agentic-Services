@@ -5,6 +5,7 @@ __pycache__/
 .DS_Store
 
 .pytest_cache/
+.tmp/
 .tmp_pytest_run/
 .ipynb_checkpoints/
 
@@ -17,6 +18,7 @@ cache/
 Data/
 Output/
 examples_for_using_gas_services/downloaded_gas_artifacts/
+generated_hillshade.tif
 
 build/
 dist/

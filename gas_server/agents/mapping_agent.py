@@ -1409,6 +1409,10 @@ CHART TEMPLATE:
         if self.primary_output_path:
             # Assuming pandas/geopandas implies vector for this implementation
             data_type = "vector"
+        additional_output_paths = [
+            path for path in self.output_dataset_paths
+            if path and path != self.primary_output_path
+        ]
 
         complementary_info = {
             "Execution": {
@@ -1442,7 +1446,7 @@ CHART TEMPLATE:
             "outputs": {
                 "text": self.final_summary,
                 "dataset_path": self.primary_output_path,
-                "dataset_paths": self.output_dataset_paths,
+                "dataset_paths": additional_output_paths,
                 "dataset_size": {
                     "type": data_type,
                     "dimensions": None,

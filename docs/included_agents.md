@@ -17,12 +17,13 @@ and capability document.
 |---|---|---|---|---|---|
 | [`geospatial_data_retrieval_agent`](#geospatial-data-retrieval-agent) | Geospatial Data Retrieval Agent | Retrieves one or more geospatial datasets from supported external sources. | Model-assisted request decomposition, source selection, and code generation using data-source handbooks. | Optional input datasets. | One or more GeoPackage, GeoJSON, GeoTIFF, Shapefile, CSV, or source-specific files. |
 | [`usgs_earthquake_agent`](#usgs-earthquake-agent) | USGS Earthquake Agent | Retrieves, maps, summarizes, monitors, and reports earthquake activity from USGS catalog and real-time feeds. | Deterministic USGS/geospatial tools with optional LLM-assisted tool planning. | Optional input datasets. | Earthquake datasets, event tables, maps, grid summaries, buffers, alert summaries, and reports. |
-| [`pasda_agent`](#pasda-discovery-agent) | PASDA Discovery Agent | Finds and downloads datasets from PASDA. | Repository-specific discovery workflow with model-assisted search and packaging. | Optional input datasets. | GeoPackage, GeoJSON, or source-specific PASDA files. |
+| [`google_earth_engine_agent`](#google-earth-engine-agent) | Google Earth Engine Agent | Runs focused Google Earth Engine remote-sensing workflows from natural-language tasks. | LLM-planned constrained JSON workflows with validated Earth Engine Python API tools. | Optional input datasets. | NDVI, climate, land-cover, surface-water, composite previews, HTML maps/charts, export task JSON, and CSV summaries. |
+| [`pasda_agent`](#pasda-discovery-agent) | PASDA Discovery Agent | Finds and downloads datasets from PASDA. | Direct ArcGIS REST shortcuts for common statewide layers plus model-assisted discovery fallback. | Optional input datasets. | GeoPackage, GeoJSON, or source-specific PASDA files. |
 | [`geospatial_data_inspection_agent`](#geospatial-data-inspection-agent) | Geospatial Data Inspection Agent | Checks vector, raster, and tabular datasets for quality and workflow readiness. | Deterministic inspection plus optional LLM-assisted interpretation. | Required input datasets. | TXT and HTML inspection reports. |
 | [`exploratory_spatial_data_analysis_agent`](#exploratory-spatial-data-analysis-agent) | Exploratory Spatial Data Analysis Agent | Profiles tabular and geospatial datasets to summarize distributions, missingness, correlations, categories, geometry, and lightweight spatial patterns. | LLM-generated ESDA scripts with deterministic pandas/geopandas/matplotlib fallback. | Required input datasets. | HTML and TXT ESDA reports plus chart images. |
 | [`geospatial_workflow_planning_agent`](#geospatial-workflow-planning-agent) | Geospatial Workflow Planning Agent | Discovers GAS capabilities and plans client-side service chains. | Capability-aware LLM planning with JSON, Markdown, code, notebook, and graph artifacts. | Optional input datasets and optional GAS GetCapabilities URLs. | Workflow plan JSON, Markdown, optional Python, notebook, and HTML graph. |
 | [`spatiotemporal_conflict_event_agent`](#spatiotemporal-conflict-event-layer-agent) | Spatiotemporal Conflict Event Layer Agent | Converts unstructured conflict reports or structured event tables into standardized, GIS-ready spatiotemporal event layers. | Structured table normalization with optional LLM extraction and optional OpenCage geocoding. | Optional input datasets or task text. | CSV event table, GeoJSON point layer, TXT/HTML reports, and optional HTML map. |
-| [`vector_analysis_agent`](#vector-analysis-agent) | Vector Analysis Agent | Performs vector joins, buffers, clips, intersections, filtering, and aggregation. | Deterministic fast paths for common operations plus model-backed fallback. | Required input datasets. | GeoPackage, GeoJSON, or CSV. |
+| [`vector_analysis_agent`](#vector-analysis-agent) | Vector Analysis Agent | Performs vector joins, buffers, clips, intersections, filtering, coverage calculations, and aggregation. | Verified deterministic fast paths for common operations plus model-backed fallback when validation fails or the task is complex. | Required input datasets. | GeoPackage, GeoJSON, or CSV. |
 | [`raster_agent`](#raster-agent) | Raster Agent | Performs raster and mixed raster-vector analysis. | Code-driven workflow with persistent runtime registry. | Required input datasets. | GeoTIFF, GeoPackage, GeoJSON, or CSV. |
 | [`spatial_analysis_agent`](#spatial-analysis-agent) | Spatial Analysis Agent | Builds and executes an end-to-end geoprocessing workflow from input datasets and a natural-language task. | LLM-designed NetworkX workflow DAG, per-operation code generation, assembly, and sandboxed execution. | Required input datasets. | GeoPackage, GeoJSON, CSV, PNG, or HTML workflow results. |
 | [`map_projection_agent`](#map-projection-agent) | Map Projection Agent | Reprojects geospatial datasets between coordinate reference systems. | Deterministic local CRS selection and reprojection with pyproj/geopandas. | Required input datasets. | GeoPackage, GeoJSON, GeoTIFF, or Shapefile. |
@@ -80,16 +81,43 @@ Files:
 - [service wrapper](https://github.com/GIBD2015/geospatial-agentic-services/blob/main/gas_server/services/usgs_earthquake_agent_service.py)
 - [capability document](https://github.com/GIBD2015/geospatial-agentic-services/blob/main/gas_server/capabilities/usgs_earthquake_agent.json)
 
+### Google Earth Engine Agent
+
+`google_earth_engine_agent` exposes Google Earth Engine as an agentic GAS
+service. A client supplies the usual model credential, the LLM creates a
+constrained JSON Earth Engine plan, and the agent validates that plan before
+executing trusted Earth Engine Python API tools. Earth Engine authentication is
+managed by the GAS deployment environment rather than by ordinary clients.
+
+Useful developer pattern:
+
+- Use the LLM for planning, not arbitrary code execution.
+- Keep Earth Engine credentials server-side.
+- Validate requested actions, datasets, dates, regions, scale, and outputs
+  before running any Earth Engine operation.
+- Return visualization previews, durable export metadata when requested, and
+  reproducible plan/provenance metadata alongside summaries.
+
+Files:
+
+- [agent implementation](https://github.com/GIBD2015/geospatial-agentic-services/blob/main/gas_server/agents/google_earth_engine_agent.py)
+- [service wrapper](https://github.com/GIBD2015/geospatial-agentic-services/blob/main/gas_server/services/google_earth_engine_agent_service.py)
+- [capability document](https://github.com/GIBD2015/geospatial-agentic-services/blob/main/gas_server/capabilities/google_earth_engine_agent.json)
+
 ### PASDA Discovery Agent
 
 `pasda_agent` is a repository-specific data retrieval agent for Pennsylvania
 Spatial Data Access. It demonstrates how to build a focused gateway to one
-external geospatial data portal.
+external geospatial data portal, including direct ArcGIS REST shortcuts for
+common statewide layers such as counties, hospitals, municipalities, school
+districts, state boundary, and state roads.
 
 Useful developer pattern:
 
 - Specialize an agent around one data repository.
-- Search, inspect, sample, and download candidate layers.
+- Prefer deterministic service/layer shortcuts for common requests, then use
+  metadata search, inspection, sampling, and model-assisted discovery when
+  needed.
 - Package source-specific files into standard GAS artifacts.
 
 Files:

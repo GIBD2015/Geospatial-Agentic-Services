@@ -461,6 +461,50 @@ def test_normalized_service_response_validates_against_json_schema(tmp_path, mon
     _validate_schema(payload, _load_json(SCHEMA_DIR / "task_response.schema.json"))
 
 
+def test_mapping_agent_multiple_output_paths_are_returned_as_artifacts(tmp_path, monkeypatch):
+    monkeypatch.setattr(service_core, "DATA_DIR", tmp_path / "Data")
+    output_dir = tmp_path / "generated"
+    output_dir.mkdir()
+    output_paths = []
+    for name in ("gwr_std_residual.png", "local_r2.png", "coef_income.png"):
+        path = output_dir / name
+        path.write_bytes(b"png placeholder")
+        output_paths.append(str(path))
+
+    payload = _build_task_payload(
+        task_id="mapping-multi-output-task",
+        agent_id="mapping_agent",
+        agent_name="Mapping Agent",
+        agent_version="2.0.1",
+        state="TASK_STATE_COMPLETED",
+        query="Create multiple GWR maps.",
+        requested_skill=None,
+        result={
+            "agent_name": "Mapping Agent",
+            "agent_version": "2.0.1",
+            "outputs": {
+                "text": "Successfully generated visualization.",
+                "dataset_path": output_paths[0],
+                "dataset_paths": output_paths[1:],
+            },
+            "metrics": {"number_of_artifacts": 3},
+        },
+        error_message=None,
+        agent_id_for_artifacts="mapping_agent",
+        output_delivery="url",
+        public_base_url="http://testserver",
+    )
+
+    artifacts = payload["outputs"]["artifacts"]
+    assert len(artifacts) == 3
+    assert {artifact["original_filename"] for artifact in artifacts} == {
+        "gwr_std_residual.png",
+        "local_r2.png",
+        "coef_income.png",
+    }
+    assert payload["provenance"]["artifacts_created"] == 3
+
+
 def test_new_agent_results_normalize_to_standard_service_response(tmp_path, monkeypatch):
     import gas_server.agents.web_mapping_app_agent as web_mapping_module
     import gas_server.agents.spatial_statistics_agent as spatial_module
@@ -751,6 +795,136 @@ def test_data_summary_aggregates_all_artifact_spatial_metadata(tmp_path, monkeyp
     assert summary["feature_count_total"] == 3
 
 
+def test_standard_response_preserves_provenance_details_without_agent_specific_core(tmp_path, monkeypatch):
+    monkeypatch.setattr(service_core, "DATA_DIR", tmp_path / "Data")
+
+    gee_summary = {"action": "ndvi_time_series", "row_count": 8}
+    gee_plan = {
+        "action": "ndvi_time_series",
+        "dataset": "sentinel2_sr",
+        "region": {"type": "bbox", "coordinates": [-78.0, 40.0, -77.0, 41.0]},
+    }
+    raw_llm_plan = {"action": "daily_ndvi"}
+
+    payload = _build_task_payload(
+        task_id="gee-structured-output-test",
+        agent_id="google_earth_engine_agent",
+        agent_name="Google Earth Engine Agent",
+        agent_version="1.0.0",
+        state="TASK_STATE_COMPLETED",
+        query="Return NDVI time series",
+        requested_skill=None,
+        result={
+            "agent_name": "Google Earth Engine Agent",
+            "agent_version": "1.0.0",
+            "outputs": {
+                "text": "Created NDVI time series.",
+                "custom_output_file": str(tmp_path / "should_be_an_artifact.txt"),
+            },
+            "complementary": {
+                "Provenance": {
+                    "Lineage": ["Validated and executed a trusted workflow."],
+                    "GEE Summary": gee_summary,
+                    "Validated Plan": gee_plan,
+                    "Raw LLM Plan": raw_llm_plan,
+                }
+            },
+            "stochasticity": {
+                "used": True,
+                "controls": ["temperature=0.1", {"name": "validated_plan"}],
+            },
+            "reproducibility_notes": [
+                "The workflow is reproduced from the validated plan rather than generated code."
+            ],
+        },
+        error_message=None,
+        agent_id_for_artifacts="google_earth_engine_agent",
+        output_delivery="url",
+        public_base_url="http://testserver",
+    )
+
+    assert "gee_summary" not in payload["outputs"]
+    assert "gee_plan" not in payload["outputs"]
+    assert payload["provenance"]["details"]["gee_summary"] == gee_summary
+    assert payload["provenance"]["details"]["validated_plan"] == gee_plan
+    assert payload["provenance"]["details"]["raw_llm_plan"] == raw_llm_plan
+    assert "custom_output_file" not in payload["outputs"]
+    assert payload["execution"]["code"] == {"available": False, "language": None, "script": None}
+    assert payload["reproducibility"]["code_available"] is False
+    assert payload["reproducibility"]["environment_available"] is True
+    assert payload["reproducibility"]["parameters_available"] is False
+    assert payload["reproducibility"]["stochasticity"] == {
+        "used": True,
+        "controls": [{"description": "temperature=0.1"}, {"name": "validated_plan"}],
+    }
+    assert payload["reproducibility"]["notes"] == [
+        "The workflow is reproduced from the validated plan rather than generated code."
+    ]
+
+
+def test_token_usage_normalizes_string_none_to_json_null(tmp_path, monkeypatch):
+    monkeypatch.setattr(service_core, "DATA_DIR", tmp_path / "Data")
+
+    payload = _build_task_payload(
+        task_id="token-null-test-task",
+        agent_id="metadata_agent",
+        agent_name="Metadata Agent",
+        agent_version="1.0.0",
+        state="TASK_STATE_COMPLETED",
+        query="Return token metadata",
+        requested_skill=None,
+        result={
+            "agent_name": "Metadata Agent",
+            "agent_version": "1.0.0",
+            "outputs": {"text": "Done."},
+            "total_input_tokens": "None",
+            "total_output_tokens": "null",
+            "total_tokens": "-",
+        },
+        error_message=None,
+        agent_id_for_artifacts="metadata_agent",
+        output_delivery="url",
+        public_base_url="http://testserver",
+    )
+
+    assert payload["provenance"]["token_usage"] == {
+        "input_tokens": None,
+        "output_tokens": None,
+        "total_tokens": None,
+    }
+
+
+def test_token_usage_normalizes_numeric_strings_and_sums_total(tmp_path, monkeypatch):
+    monkeypatch.setattr(service_core, "DATA_DIR", tmp_path / "Data")
+
+    payload = _build_task_payload(
+        task_id="token-number-test-task",
+        agent_id="metadata_agent",
+        agent_name="Metadata Agent",
+        agent_version="1.0.0",
+        state="TASK_STATE_COMPLETED",
+        query="Return token metadata",
+        requested_skill=None,
+        result={
+            "agent_name": "Metadata Agent",
+            "agent_version": "1.0.0",
+            "outputs": {"text": "Done."},
+            "total_input_tokens": "12",
+            "total_output_tokens": "8",
+        },
+        error_message=None,
+        agent_id_for_artifacts="metadata_agent",
+        output_delivery="url",
+        public_base_url="http://testserver",
+    )
+
+    assert payload["provenance"]["token_usage"] == {
+        "input_tokens": 12,
+        "output_tokens": 8,
+        "total_tokens": 20,
+    }
+
+
 def test_reproducibility_section_indexes_inputs_outputs_and_stochasticity(tmp_path, monkeypatch):
     monkeypatch.setattr(service_core, "DATA_DIR", tmp_path / "Data")
     output_dir = tmp_path / "generated"
@@ -812,6 +986,181 @@ def test_reproducibility_section_indexes_inputs_outputs_and_stochasticity(tmp_pa
     assert reproducibility["output_artifacts"][0]["role"] == "output"
     assert reproducibility["parameters"] == {"buffer_distance": 1000}
     assert reproducibility["stochasticity"] == {"used": False, "controls": []}
+
+
+def test_normalized_service_response_redacts_sensitive_request_parameters(tmp_path, monkeypatch):
+    monkeypatch.setattr(service_core, "DATA_DIR", tmp_path / "Data")
+
+    payload = _build_task_payload(
+        task_id="redaction-test-task",
+        agent_id="metadata_agent",
+        agent_name="Metadata Agent",
+        agent_version="1.0.0",
+        state="TASK_STATE_COMPLETED",
+        query="Return redacted parameters",
+        requested_skill=None,
+        result={
+            "agent_name": "Metadata Agent",
+            "agent_version": "1.0.0",
+            "inputs": {
+                "dataset_paths": [],
+                "parameters": {
+                    "OPENAI_API_KEY": "sk-test-secret",
+                    "parameters": {"GIBD_API_KEY": "gibd-secret"},
+                    "source_credentials": {"EPA_AQS": {"email": "user@example.com", "key": "aqs-secret"}},
+                    "max_cloud_percent": 20,
+                },
+            },
+            "complementary": {
+                "Execution": {
+                    "Inputs": {
+                        "dataset_paths": [],
+                        "parameters": {"openai_api_key": "sk-complementary-secret"},
+                    }
+                }
+            },
+            "outputs": {"text": "Done."},
+        },
+        error_message=None,
+        agent_id_for_artifacts="metadata_agent",
+        output_delivery="url",
+        public_base_url="http://testserver",
+    )
+
+    serialized = json.dumps(payload)
+    assert "sk-test-secret" not in serialized
+    assert "sk-complementary-secret" not in serialized
+    assert "gibd-secret" not in serialized
+    assert "aqs-secret" not in serialized
+    parameters = payload["execution"]["inputs"]["parameters"]
+    assert parameters["OPENAI_API_KEY"] == "[REDACTED]"
+    assert parameters["parameters"]["GIBD_API_KEY"] == "[REDACTED]"
+    assert parameters["source_credentials"] == "[REDACTED]"
+    assert parameters["max_cloud_percent"] == 20
+    assert payload["reproducibility"]["parameters"] == parameters
+
+
+def test_artifacts_include_semantic_role_labels_and_original_filename(tmp_path, monkeypatch):
+    monkeypatch.setattr(service_core, "DATA_DIR", tmp_path / "Data")
+    output_dir = tmp_path / "generated"
+    output_dir.mkdir()
+    summary_path = output_dir / "gee_ndvi_summary_example.json"
+    plan_path = output_dir / "gee_validated_plan_example.json"
+    summary_path.write_text(json.dumps({"ndvi": {"mean": 0.5}}), encoding="utf-8")
+    plan_path.write_text(json.dumps({"plan": {"action": "ndvi_summary"}}), encoding="utf-8")
+
+    payload = _build_task_payload(
+        task_id="artifact-role-test-task",
+        agent_id="google_earth_engine_agent",
+        agent_name="Google Earth Engine Agent",
+        agent_version="1.0.0",
+        state="TASK_STATE_COMPLETED",
+        query="Summarize NDVI",
+        requested_skill=None,
+        result={
+            "agent_name": "Google Earth Engine Agent",
+            "agent_version": "1.0.0",
+            "outputs": {
+                "text": "Done.",
+                "ndvi_summary_json_file": str(summary_path),
+                "validated_plan_json_file": str(plan_path),
+                "output_files": [str(summary_path), str(plan_path)],
+            },
+        },
+        error_message=None,
+        agent_id_for_artifacts="google_earth_engine_agent",
+        output_delivery="url",
+        public_base_url="http://testserver",
+    )
+
+    artifacts = payload["outputs"]["artifacts"]
+    assert [artifact["role"] for artifact in artifacts] == ["ndvi_summary_json_file", "validated_plan_json_file"]
+    assert artifacts[0]["label"] == "Ndvi Summary Json"
+    assert artifacts[0]["original_filename"] == summary_path.name
+    assert payload["reproducibility"]["output_artifacts"][0]["role"] == "ndvi_summary_json_file"
+    assert payload["reproducibility"]["output_artifacts"][1]["label"] == "Validated Plan Json"
+
+
+def test_generic_artifact_keys_use_clean_roles_while_semantic_roles_are_preserved(tmp_path, monkeypatch):
+    monkeypatch.setattr(service_core, "DATA_DIR", tmp_path / "Data")
+    output_dir = tmp_path / "generated"
+    output_dir.mkdir()
+    output_path = output_dir / "generic_output.geojson"
+    dataset_path = output_dir / "dataset_output.gpkg"
+    semantic_path = output_dir / "gee_ndvi_map.html"
+    output_path.write_text('{"type":"FeatureCollection","features":[]}', encoding="utf-8")
+    dataset_path.write_text("placeholder", encoding="utf-8")
+    semantic_path.write_text("<html></html>", encoding="utf-8")
+
+    payload = _build_task_payload(
+        task_id="generic-artifact-role-test-task",
+        agent_id="metadata_agent",
+        agent_name="Metadata Agent",
+        agent_version="1.0.0",
+        state="TASK_STATE_COMPLETED",
+        query="Return mixed outputs",
+        requested_skill=None,
+        result={
+            "agent_name": "Metadata Agent",
+            "agent_version": "1.0.0",
+            "outputs": {
+                "text": "Done.",
+                "output_file": str(output_path),
+                "dataset_path": str(dataset_path),
+                "ndvi_map_html_file": str(semantic_path),
+            },
+        },
+        error_message=None,
+        agent_id_for_artifacts="metadata_agent",
+        output_delivery="url",
+        public_base_url="http://testserver",
+    )
+
+    roles = [artifact["role"] for artifact in payload["outputs"]["artifacts"]]
+    assert roles == ["output", "dataset", "ndvi_map_html_file"]
+    assert [artifact["role"] for artifact in payload["reproducibility"]["output_artifacts"]] == roles
+
+
+def test_external_url_artifacts_include_semantic_role_labels(tmp_path, monkeypatch):
+    monkeypatch.setattr(service_core, "DATA_DIR", tmp_path / "Data")
+
+    payload = _build_task_payload(
+        task_id="external-artifact-test-task",
+        agent_id="google_earth_engine_agent",
+        agent_name="Google Earth Engine Agent",
+        agent_version="1.0.0",
+        state="TASK_STATE_COMPLETED",
+        query="Create NDVI thumbnail",
+        requested_skill=None,
+        result={
+            "agent_name": "Google Earth Engine Agent",
+            "agent_version": "1.0.0",
+            "outputs": {
+                "text": "Created thumbnail.",
+                "ndvi_thumbnail_png_url": {
+                    "kind": "downloadable_file",
+                    "filename": "gee_ndvi_thumbnail.png",
+                    "format": "png",
+                    "mime_type": "image/png",
+                    "size_bytes": None,
+                    "url": "https://earthengine.example/thumbnail.png",
+                    "_artifact_role": "ndvi_thumbnail_png_url",
+                    "_artifact_label": "Earth Engine NDVI Preview",
+                    "_original_filename": "gee_ndvi_thumbnail.png",
+                },
+            },
+        },
+        error_message=None,
+        agent_id_for_artifacts="google_earth_engine_agent",
+        output_delivery="url",
+        public_base_url="http://testserver",
+    )
+
+    artifact = payload["outputs"]["artifacts"][0]
+    assert artifact["role"] == "ndvi_thumbnail_png_url"
+    assert artifact["label"] == "Earth Engine NDVI Preview"
+    assert artifact["name"] == "gee_ndvi_thumbnail.png"
+    assert artifact["url"] == "https://earthengine.example/thumbnail.png"
 
 
 def test_agent_capability_documents_do_not_contain_unconfigured_machine_paths_or_hosts():

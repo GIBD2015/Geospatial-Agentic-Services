@@ -131,6 +131,48 @@ class WebMappingAppAgent(GeoAgent):
     def _dataset_context(self, dataset_paths: list[str]) -> list[dict[str, Any]]:
         return [self._inspect_dataset(path) for path in dataset_paths]
 
+    def _is_temporal_column_name(self, column: str) -> bool:
+        return bool(re.search(r"(?:^|[_\s-])(time|date|datetime|timestamp)(?:$|[_\s-])", str(column), re.IGNORECASE))
+
+    def _epoch_unit_for_series(self, series: pd.Series) -> str | None:
+        numeric = pd.to_numeric(series, errors="coerce").dropna()
+        if numeric.empty:
+            return None
+
+        median_abs = float(numeric.abs().median())
+        if median_abs >= 1e18:
+            return "ns"
+        if median_abs >= 1e15:
+            return "us"
+        if median_abs >= 1e11:
+            return "ms"
+        if median_abs >= 1e9:
+            return "s"
+        return None
+
+    def _normalize_temporal_columns_for_leaflet(self, gdf: gpd.GeoDataFrame) -> gpd.GeoDataFrame:
+        normalized = gdf.copy()
+        for column in normalized.columns:
+            if column == normalized.geometry.name or not self._is_temporal_column_name(str(column)):
+                continue
+
+            unit = self._epoch_unit_for_series(normalized[column])
+            if not unit:
+                continue
+
+            converted = pd.to_datetime(normalized[column], unit=unit, utc=True, errors="coerce")
+            valid = converted.dropna()
+            if valid.empty:
+                continue
+
+            plausible = valid[(valid.dt.year >= 1900) & (valid.dt.year <= 2200)]
+            if len(plausible) < max(1, int(len(valid) * 0.8)):
+                continue
+
+            normalized[column] = converted.dt.strftime("%Y-%m-%d %H:%M:%S UTC")
+
+        return normalized
+
     def _prepare_leaflet_dataset_paths(self, dataset_paths: list[str], progress_callback=None) -> list[str]:
         """Return dataset paths that are safe to use directly in Leaflet/Folium.
 
@@ -161,6 +203,7 @@ class WebMappingAppAgent(GeoAgent):
                 source_crs = str(gdf.crs) if gdf.crs else None
                 if gdf.crs is not None:
                     gdf = gdf.to_crs("EPSG:4326")
+                gdf = self._normalize_temporal_columns_for_leaflet(gdf)
                 target_path = prepared_dir / f"input_{index + 1}_{dataset.stem}_wgs84.geojson"
                 gdf.to_file(target_path, driver="GeoJSON")
                 prepared_paths.append(str(target_path))
@@ -204,7 +247,9 @@ class WebMappingAppAgent(GeoAgent):
             "L.control.layers(baseLayers, overlayLayers, {collapsed:false}).addTo(map). "
             "Do not satisfy this requirement only with sidebar checkboxes or explanatory text. "
             "Legends must be compact, readable, and placed in a sidebar or bottom-right control area; "
-            "do not create a long horizontal legend across the map. "
+            "do not create a long horizontal legend across the map. If the legend is placed on the map, "
+            "put the legend title inside the same legend box above the swatches/classes rather than as a separate "
+            "sidebar card or detached heading. "
             "Legend swatches must use valid CSS colors such as hex, named colors, rgb(...), or rgba(...); "
             "never write Python or Matplotlib color tuples such as background:(0.5, 0.2, 0.1, 1.0). "
             "Do not place a full-width information panel over the map. If you add explanatory content, "
@@ -213,6 +258,13 @@ class WebMappingAppAgent(GeoAgent):
             "The provided vector dataset paths are already prepared for Leaflet when possible; do not replace them "
             "with the original projected coordinates. If you read any vector data yourself, convert it to EPSG:4326 "
             "before creating GeoJSON, Choropleth, or GeoJson layers. "
+            "Preserve temporal attributes correctly in popups, tables, labels, filters, and charts. "
+            "Fields named time, event_time, timestamp, datetime, or date may contain Unix epoch values. "
+            "For numeric epochs, 13-digit values are milliseconds, 10-digit values are seconds, "
+            "16-digit values are microseconds, and 19-digit values are nanoseconds. "
+            "In pandas, never call bare pd.to_datetime on numeric epoch values; pass the correct unit, "
+            "for example pd.to_datetime(values, unit=\"ms\", utc=True) for 13-digit millisecond timestamps. "
+            "In JavaScript, new Date(value) expects milliseconds; multiply only 10-digit second epochs by 1000. "
             "Do not download external datasets. Use only the provided dataset paths. "
             "The code must save the final HTML app to the exact OUTPUT_HTML path and print "
             "`__OUTPUT_PATH__=<path>` after saving. Return only Python code in a python fenced block."
@@ -237,10 +289,12 @@ Implementation requirements:
 - Create a browser-ready web mapping application as an HTML file, not a static PNG.
 - Use folium when available; otherwise generate a standalone Leaflet HTML file from Python.
 - Leaflet/Folium requires vector coordinates in EPSG:4326. Use the dataset paths provided here; they are Leaflet-ready WGS84 copies when the original inputs used a projected CRS. If you load or transform vector data, call to_crs("EPSG:4326") before adding it to a web map.
+- Treat temporal fields carefully. Columns named time, event_time, timestamp, datetime, or date may already be normalized to ISO UTC strings in the prepared inputs. If they are numeric epoch values, infer the unit by digit length: 13-digit = milliseconds, 10-digit = seconds, 16-digit = microseconds, 19-digit = nanoseconds. Do not use bare pd.to_datetime on numeric epochs.
 - Include an app-like layout when useful, such as a header, sidebar, summary cards, filters, search, charts, or tables.
 - Always include a real Leaflet/Folium layer control for all map layers and basemaps unless the user explicitly asks not to. Use folium.LayerControl(collapsed=False).add_to(m) or L.control.layers(..., {{collapsed:false}}).addTo(map). Sidebar checkboxes can be added, but they do not replace the map layer control.
 - Add a polished visible map title, not only the HTML <title>. It should be concise, professional, and based on the user's request and datasets unless the user explicitly asks not to.
 - If the map uses choropleth, graduated color, classified color, or any value-based symbology, include a clear compact legend explaining colors/classes/values unless the user explicitly asks not to. Put legends in a sidebar or bottom-right map control with max-width around 320px; do not create a long horizontal legend across the map.
+- If a legend is placed on the map, its title must appear inside the same legend box above the color swatches/classes. Do not put a detached "Legend" title in the left panel while the actual legend symbols are on the map.
 - Legend swatches must use valid CSS colors, for example #fdae61 or rgba(253,174,97,0.85). Do not use raw Python tuples from Matplotlib colormaps in CSS.
 - Keep narrative panels compact. Prefer a left sidebar no wider than about 360px, or a collapsible panel. Do not create a full-width top panel that covers a large part of the map.
 - Support multiple vector layers with layer controls and popups.
@@ -567,6 +621,9 @@ Implementation requirements:
       }
       document.querySelectorAll("#app-container, .app-container, .app-shell").forEach(function (el) {
         if (el.contains(mapEl)) {
+          return;
+        }
+        if (el.classList.contains("app-container") && el.querySelector(".sidebar")) {
           return;
         }
         const rect = el.getBoundingClientRect();

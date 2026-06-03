@@ -160,6 +160,9 @@ def test_print_task_summary_includes_usage_artifacts_and_diagnostics(capsys):
                 "artifacts": [
                     {
                         "name": "map.png",
+                        "role": "interactive_map_png_file",
+                        "label": "Interactive Map Png",
+                        "original_filename": "rendered_map.png",
                         "format": "png",
                         "type": "downloadable_file",
                         "size_bytes": 1234,
@@ -184,8 +187,145 @@ def test_print_task_summary_includes_usage_artifacts_and_diagnostics(capsys):
     assert "Input tokens : 100" in output
     assert "Output tokens: 25" in output
     assert "Total tokens : 125" in output
+    assert "Interactive Map Png (map.png)" in output
+    assert "role=interactive_map_png_file" in output
+    assert "original=rendered_map.png" in output
     assert "map.png" in output
     assert "Warnings     : -" in output
+
+
+def test_run_streaming_task_prints_events_summary_and_returns_final_payload(capsys):
+    session = FakeSession(
+        [
+            FakeResponse(payload=capabilities_payload("mapping_agent")),
+            FakeResponse(
+                lines=[
+                    json.dumps(
+                        {
+                            "event": "progress",
+                            "timestamp": "2026-05-18T22:52:14+00:00",
+                            "message": "Working on it.",
+                        }
+                    ),
+                    json.dumps(
+                        {
+                            "event": "task_result",
+                            "timestamp": "2026-05-18T22:52:15+00:00",
+                            "payload": {
+                                "task": {"id": "task-1", "status": "successful"},
+                                "agent": {"id": "mapping_agent", "name": "Mapping Agent"},
+                                "outputs": {"summary": "Done.", "artifacts": []},
+                            },
+                        }
+                    ),
+                ]
+            ),
+            FakeResponse(payload=describe_payload("mapping_agent")),
+        ]
+    )
+    client = GasClient("http://127.0.0.1:4042", session=session)
+
+    result = client.run_streaming_task("mapping_agent", "Make a map.", parameters={"style": "simple"})
+
+    output = capsys.readouterr().out
+    post_call = next(call for call in session.calls if call[0] == "POST")
+
+    assert result["task"]["id"] == "task-1"
+    assert "mapping_agent: Working on it." in output
+    assert "GAS Task Summary" in output
+    assert post_call[0] == "POST"
+    assert post_call[2]["json"]["task"]["mode"] == "stream"
+    assert post_call[2]["json"]["parameters"] == {"style": "simple"}
+
+
+def test_agent_bound_run_streaming_task_can_suppress_printing(capsys):
+    session = FakeSession(
+        [
+            FakeResponse(payload=capabilities_payload("mapping_agent")),
+            FakeResponse(
+                lines=[
+                    json.dumps(
+                        {
+                            "event": "task_result",
+                            "payload": {
+                                "task": {"id": "task-2", "status": "successful"},
+                                "agent": {"id": "mapping_agent", "name": "Mapping Agent"},
+                                "outputs": {"summary": "Done.", "artifacts": []},
+                            },
+                        }
+                    )
+                ]
+            ),
+            FakeResponse(payload=describe_payload("mapping_agent")),
+        ]
+    )
+    client = GasClient("http://127.0.0.1:4042", session=session)
+    agent = client.agent("mapping_agent")
+
+    result = agent.run_streaming_task("Make another map.", print_events=False, print_summary=False)
+
+    assert result["task"]["id"] == "task-2"
+    assert capsys.readouterr().out == ""
+
+
+@pytest.mark.parametrize(
+    ("artifact", "expected_kind"),
+    [
+        ({"name": "map.png", "format": "png"}, "image"),
+        ({"name": "preview.html", "mime_type": "text/html"}, "html"),
+        ({"name": "boundary.geojson", "format": "geojson"}, "geojson"),
+        ({"name": "raster.tif", "format": "tif"}, "geotiff"),
+        ({"name": "data.gpkg", "format": "gpkg"}, "vector"),
+        ({"name": "report.json", "format": "json"}, "json"),
+        ({"name": "table.csv", "format": "csv"}, "csv"),
+    ],
+)
+def test_artifact_visual_kind_classifies_common_outputs(artifact, expected_kind):
+    assert GasClient._artifact_visual_kind(artifact) == expected_kind
+
+
+def test_display_artifacts_requires_ipython(monkeypatch):
+    client = GasClient("http://127.0.0.1:4042", load_capabilities=False)
+
+    real_import = __import__
+
+    def fake_import(name, *args, **kwargs):
+        if name == "IPython.display":
+            raise ImportError("no ipython")
+        return real_import(name, *args, **kwargs)
+
+    monkeypatch.setattr("builtins.__import__", fake_import)
+
+    with pytest.raises(GasClientError, match="requires IPython"):
+        client.display_artifacts({"outputs": {"artifacts": []}})
+
+
+def test_light_html_data_url_injects_light_color_scheme():
+    data_url = GasClient._light_html_data_url("<html><head></head><body>Hello</body></html>")
+
+    assert data_url.startswith("data:text/html;base64,")
+    encoded = data_url.split(",", 1)[1]
+    decoded = __import__("base64").b64decode(encoded).decode("utf-8")
+
+    assert "color-scheme" in decoded
+    assert "background:#fff" in decoded
+    assert "Hello" in decoded
+
+
+def test_csv_preview_html_displays_first_rows_only():
+    html_table = GasClient._csv_preview_html("a,b\n1,2\n3,4\n5,6\n", preview_rows=2)
+
+    assert "<th>a</th>" in html_table
+    assert "<td>1</td>" in html_table
+    assert "<td>3</td>" in html_table
+    assert "<td>5</td>" not in html_table
+
+
+def test_json_preview_html_escapes_and_truncates():
+    html_preview = GasClient._json_preview_html({"message": "<hello>", "items": [1, 2, 3]}, max_chars=24)
+
+    assert "&lt;hello" in html_preview
+    assert "[truncated]" in html_preview
 
 
 def test_build_execute_task_request_adds_credentials_datasets_and_artifact_delivery():
@@ -546,12 +686,77 @@ def test_helpers_extract_task_state_and_artifact_urls():
     client = GasClient("http://127.0.0.1:4042", load_capabilities=False)
     task = {
         "task": {"id": "task-1", "status": "successful"},
-        "outputs": {"artifacts": [{"url": "http://example.test/a.html"}, {"name": "local.txt"}]},
+        "outputs": {
+            "artifacts": [
+                {"url": "http://example.test/a.html", "format": "html", "role": "map_html"},
+                {"url": "http://example.test/b.csv", "format": "csv", "role": "table_csv"},
+                {"name": "local.txt"},
+            ]
+        },
     }
 
     assert client.get_task_id(task) == "task-1"
     assert client.get_task_status_value(task) == "successful"
-    assert client.get_artifact_urls(task) == ["http://example.test/a.html"]
+    assert client.get_artifact_urls(task) == ["http://example.test/a.html", "http://example.test/b.csv"]
+    assert client.get_artifact_urls(task, format="csv") == ["http://example.test/b.csv"]
+    assert client.get_artifact_urls(task, role="map_html") == ["http://example.test/a.html"]
+    assert client.get_artifacts(task, format="html")[0]["role"] == "map_html"
+
+
+def test_print_artifacts_outputs_readable_list(capsys):
+    client = GasClient("http://127.0.0.1:4042", load_capabilities=False)
+    task = {
+        "outputs": {
+            "artifacts": [
+                {
+                    "label": "Map HTML",
+                    "role": "map_html",
+                    "format": "html",
+                    "type": "downloadable_file",
+                    "name": "map.html",
+                    "url": "http://example.test/map.html",
+                },
+                {
+                    "label": "Daily Table",
+                    "role": "table_csv",
+                    "format": "csv",
+                    "type": "downloadable_file",
+                    "name": "table.csv",
+                    "url": "http://example.test/table.csv",
+                },
+            ]
+        }
+    }
+
+    client.print_artifacts(task, format="html")
+
+    output = capsys.readouterr().out
+
+    assert "Artifacts: 1" in output
+    assert "Map HTML" in output
+    assert "role" in output
+    assert "map_html" in output
+    assert "Daily Table" not in output
+
+
+def test_print_artifacts_accepts_selected_artifact_list(capsys):
+    client = GasClient("http://127.0.0.1:4042", load_capabilities=False)
+    selected = [
+        {
+            "label": "Daily Table",
+            "role": "table_csv",
+            "format": "csv",
+            "url": "http://example.test/table.csv",
+        }
+    ]
+
+    client.print_artifacts(artifacts=selected)
+
+    output = capsys.readouterr().out
+
+    assert "Artifacts: 1" in output
+    assert "Daily Table" in output
+    assert "table_csv" in output
 
 
 def test_wait_for_task_raises_timeout(monkeypatch):

@@ -421,6 +421,12 @@ caller requests encoded artifacts. Reproducibility artifact references should
 therefore identify the artifact and its role, but should not repeat large
 encoded payloads.
 
+Artifact `role` values are stable identifiers for client code. Simple
+single-output tasks may use generic roles such as `output` or `dataset`.
+Multi-artifact workflows should use semantic roles such as
+`ndvi_map_html_file`, `validated_plan_json_file`, or
+`earth_engine_export_task_json_file`.
+
 Task status values are:
 
 ```text
@@ -453,7 +459,7 @@ Example successful task response:
   "agent": {
     "id": "vector_analysis_agent",
     "name": "Vector Analysis Agent",
-    "version": "1.0.0",
+    "version": "2.1.0",
     "model": "gpt-5.2"
   },
   "outputs": {
@@ -461,8 +467,11 @@ Example successful task response:
     "artifacts": [
       {
         "name": "county_obesity_join.gpkg",
-        "type": "vector",
-        "format": "GPKG",
+        "role": "dataset",
+        "label": "Dataset",
+        "original_filename": "county_obesity_join.gpkg",
+        "type": "downloadable_file",
+        "format": "gpkg",
         "mime_type": "application/geopackage+sqlite3",
         "size_bytes": 1843920,
         "url": "https://your-gas-server.example.com/agents/vector_analysis_agent/data/county_obesity_join.gpkg",
@@ -495,7 +504,7 @@ Example successful task response:
     "data_summary": {
       "artifact_count": 1,
       "artifact_types": ["vector"],
-      "formats": ["GPKG"],
+      "formats": ["gpkg"],
       "crs": ["EPSG:4326"],
       "has_vector": true,
       "has_raster": false,
@@ -504,7 +513,7 @@ Example successful task response:
     }
   },
   "execution": {
-    "status": "successful",
+    "status": "success",
     "duration_seconds": 12.4,
     "iterations": 1,
     "inputs": {
@@ -523,7 +532,7 @@ Example successful task response:
   },
   "provenance": {
     "llm_calls": 0,
-    "tool_calls": 1,
+    "tool_calls": 0,
     "artifacts_created": 1,
     "token_usage": {
       "input_tokens": null,
@@ -535,22 +544,25 @@ Example successful task response:
   "reproducibility": {
     "code_available": true,
     "environment_available": true,
-    "parameters_available": true,
+    "parameters_available": false,
     "input_artifacts": [
       {
-        "name": "counties.gpkg",
-        "role": "input_dataset"
+        "role": "input",
+        "path": "counties.gpkg"
       },
       {
-        "name": "obesity.csv",
-        "role": "input_dataset"
+        "role": "input",
+        "path": "obesity.csv"
       }
     ],
     "output_artifacts": [
       {
         "name": "county_obesity_join.gpkg",
-        "role": "primary_output",
-        "format": "GPKG"
+        "role": "dataset",
+        "label": "Dataset",
+        "original_filename": "county_obesity_join.gpkg",
+        "format": "gpkg",
+        "type": "downloadable_file"
       }
     ],
     "parameters": {},
@@ -670,9 +682,9 @@ inspect, download, display, or pass the artifact into another GAS service.
 Common artifact fields include:
 
 - `name`: artifact file name.
-- `type`: high-level artifact category, such as vector, raster, table, report,
-  map, chart, or downloadable file.
-- `format`: file format, such as GPKG, GeoJSON, GeoTIFF, CSV, HTML, TXT, or
+- `type`: delivery kind or artifact category, commonly `downloadable_file` for
+  URL-delivered files. Spatial data type is reported in `spatial_metadata.type`.
+- `format`: file format, such as gpkg, geojson, tif, csv, html, txt, json, or
   PNG.
 - `mime_type`: media type when known.
 - `size_bytes`: artifact size.
@@ -693,8 +705,11 @@ Example vector artifact:
 ```json
 {
   "name": "analysis_result.gpkg",
-  "type": "vector",
-  "format": "GPKG",
+  "role": "dataset",
+  "label": "Dataset",
+  "original_filename": "analysis_result.gpkg",
+  "type": "downloadable_file",
+  "format": "gpkg",
   "mime_type": "application/geopackage+sqlite3",
   "size_bytes": 1843920,
   "url": "https://your-gas-server.example.com/agents/vector_analysis_agent/data/analysis_result.gpkg",

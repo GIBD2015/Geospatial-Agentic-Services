@@ -73,6 +73,19 @@ REQUEST_GIBD_KEY_FIELDS = (
     "gibdApiKey",
 )
 
+SENSITIVE_PARAMETER_PATTERNS = (
+    "api_key",
+    "apikey",
+    "access_token",
+    "refresh_token",
+    "id_token",
+    "authorization",
+    "password",
+    "secret",
+    "private_key",
+    "credentials",
+)
+
 
 def _has_model_credentials(credentials: Dict[str, str | None]) -> bool:
     return bool(credentials.get("openai_api_key") or credentials.get("gibd_api_key"))
@@ -361,6 +374,69 @@ def _first_present(mapping: Dict[str, Any], field_names: Tuple[str, ...]) -> str
     return None
 
 
+def _is_sensitive_key(key: Any) -> bool:
+    normalized = re.sub(r"[^a-z0-9]+", "_", str(key).lower()).strip("_")
+    return (
+        normalized == "key"
+        or normalized.endswith("_key")
+        or any(pattern in normalized for pattern in SENSITIVE_PARAMETER_PATTERNS)
+    )
+
+
+def _redact_sensitive(value: Any, *, parent_key: str = "") -> Any:
+    if _is_sensitive_key(parent_key):
+        return "[REDACTED]"
+    if isinstance(value, dict):
+        return {
+            key: _redact_sensitive(item, parent_key=str(key))
+            for key, item in value.items()
+        }
+    if isinstance(value, list):
+        return [_redact_sensitive(item, parent_key=parent_key) for item in value]
+    return value
+
+
+def _artifact_label_from_key(value: str) -> str:
+    cleaned = re.sub(r"(_?file|_?path|_?output|_?artifact|_?downloaded)s?$", "", value, flags=re.I)
+    cleaned = re.sub(r"[_\s]+", " ", cleaned).strip()
+    return cleaned.title() if cleaned else value.replace("_", " ").title()
+
+
+def _artifact_role_from_key(value: str) -> str:
+    normalized = re.sub(r"[^a-z0-9]+", "_", str(value or "").lower()).strip("_")
+    generic_output_roles = {
+        "file",
+        "files",
+        "path",
+        "paths",
+        "output",
+        "outputs",
+        "output_file",
+        "output_files",
+        "output_path",
+        "output_paths",
+        "file_path",
+        "file_paths",
+        "downloaded_file",
+        "downloaded_files",
+        "downloaded_path",
+        "downloaded_paths",
+    }
+    generic_dataset_roles = {
+        "dataset",
+        "datasets",
+        "dataset_file",
+        "dataset_files",
+        "dataset_path",
+        "dataset_paths",
+    }
+    if normalized in generic_dataset_roles:
+        return "dataset"
+    if normalized in generic_output_roles:
+        return "output"
+    return normalized or "output"
+
+
 def _gas_status_for_state(state: str) -> str:
     return STATE_TO_STATUS.get(state, state.lower())
 
@@ -467,7 +543,7 @@ def _displayed_reasoning_message(stage: str, spec: AgentSpec, detail: str | None
         "received": f"The user wants help from the {spec.agent_id}.",
         "inputs": "I need to inspect the request text and any provided dataset references before running the agent.",
         "credentials": "I found the required credentials and can start the model-backed workflow.",
-        "agent_start": "Next I will run the agent with the prepared inputs.",
+        "agent_start": "Next I will start the workflow with the prepared inputs.",
         "agent_done": "The agent finished its workflow, so I will normalize the result and prepare artifacts.",
         "failed": "The agent hit an issue, so I will return the error in the final diagnostics.",
     }
@@ -766,6 +842,9 @@ def _transform_output_files(
             )
             payload["_original_filename"] = original_path.name
             payload["_original_path"] = str(original_path)
+            artifact_role = _artifact_role_from_key(key_name)
+            payload["_artifact_role"] = artifact_role
+            payload["_artifact_label"] = _artifact_label_from_key(artifact_role)
             return payload
         return value
 
@@ -1142,6 +1221,9 @@ def _normalize_artifacts(result: Dict[str, Any] | None) -> List[Dict[str, Any]]:
         normalized.append(
             {
                 "name": payload.get("filename") or f"artifact_{index}",
+                "role": payload.get("_artifact_role"),
+                "label": payload.get("_artifact_label"),
+                "original_filename": payload.get("_original_filename"),
                 "type": payload.get("kind"),
                 "format": payload.get("format"),
                 "mime_type": payload.get("mime_type"),
@@ -1270,7 +1352,7 @@ def _normalize_execution_inputs(value: Any) -> Dict[str, Any]:
     parameters = value.get("parameters") if isinstance(value.get("parameters"), dict) else {}
     return {
         "dataset_paths": dataset_paths,
-        "parameters": parameters,
+        "parameters": _redact_sensitive(parameters),
     }
 
 
@@ -1289,7 +1371,7 @@ def _merge_execution_inputs(primary: Any, fallback: Any) -> Dict[str, Any]:
         parameters.update(primary_inputs["parameters"])
     return {
         "dataset_paths": dataset_paths,
-        "parameters": parameters,
+        "parameters": _redact_sensitive(parameters),
     }
 
 
@@ -1315,10 +1397,31 @@ def _extract_count(value: Any) -> Any:
     return value
 
 
+def _normalize_token_count(value: Any) -> int | None:
+    if value is None:
+        return None
+    if isinstance(value, str):
+        if value.strip().lower() in {"", "none", "null", "nan", "-"}:
+            return None
+        try:
+            return int(value)
+        except ValueError:
+            return None
+    if isinstance(value, bool):
+        return int(value)
+    if isinstance(value, (int, float)):
+        return int(value)
+    return None
+
+
 def _normalize_token_usage(result: Dict[str, Any]) -> Dict[str, Any]:
-    input_tokens = result.get("total_input_tokens")
-    output_tokens = _first_non_empty(result.get("total_output_tokens"), result.get("toatal_output_tokens"))
-    total_tokens = _first_non_empty(result.get("total_tokens"), (input_tokens + output_tokens) if isinstance(input_tokens, int) and isinstance(output_tokens, int) else None)
+    input_tokens = _normalize_token_count(result.get("total_input_tokens"))
+    output_tokens = _normalize_token_count(
+        _first_non_empty(result.get("total_output_tokens"), result.get("toatal_output_tokens"))
+    )
+    total_tokens = _normalize_token_count(result.get("total_tokens"))
+    if total_tokens is None and input_tokens is not None and output_tokens is not None:
+        total_tokens = input_tokens + output_tokens
     return {
         "input_tokens": input_tokens,
         "output_tokens": output_tokens,
@@ -1378,8 +1481,10 @@ def _normalize_reproducibility(
     ]
     output_artifacts = [
         {
-            "role": "output",
+            "role": artifact.get("role") or "output",
+            "label": artifact.get("label"),
             "name": artifact.get("name"),
+            "original_filename": artifact.get("original_filename"),
             "url": artifact.get("url"),
             "format": artifact.get("format"),
             "type": artifact.get("type"),
@@ -1387,6 +1492,13 @@ def _normalize_reproducibility(
         for artifact in normalized_artifacts
     ]
     stochasticity = result.get("stochasticity") if isinstance(result.get("stochasticity"), dict) else {}
+    controls = stochasticity.get("controls", [])
+    if not isinstance(controls, list):
+        controls = [controls]
+    normalized_controls = [
+        control if isinstance(control, dict) else {"description": str(control)}
+        for control in controls
+    ]
     return {
         "code_available": bool(code.get("available")),
         "environment_available": bool(runtime.get("python_version") or runtime.get("domain-specific_libraries")),
@@ -1396,7 +1508,7 @@ def _normalize_reproducibility(
         "parameters": execution_inputs.get("parameters", {}),
         "stochasticity": {
             "used": stochasticity.get("used", "unknown"),
-            "controls": stochasticity.get("controls", []),
+            "controls": normalized_controls,
         },
         "notes": result.get("reproducibility_notes") if isinstance(result.get("reproducibility_notes"), list) else [],
     }
@@ -1413,6 +1525,21 @@ def _parse_duration_seconds(value: Any) -> float | None:
             except ValueError:
                 return None
     return None
+
+
+def _normalize_metadata_key(value: str) -> str:
+    normalized = re.sub(r"[^a-zA-Z0-9]+", "_", value).strip("_").lower()
+    return normalized or "metadata"
+
+
+def _normalize_provenance_details(complementary_provenance: Dict[str, Any]) -> Dict[str, Any]:
+    standard_keys = {"Lineage", "Tool Calls", "LLM Calls"}
+    details: Dict[str, Any] = {}
+    for key, value in complementary_provenance.items():
+        if key in standard_keys:
+            continue
+        details[_normalize_metadata_key(str(key))] = _remove_stream_event_fields(value)
+    return details
 
 
 def _normalize_agent_result(
@@ -1472,6 +1599,20 @@ def _normalize_agent_result(
         code=code,
         result=result,
     )
+    provenance_details = _normalize_provenance_details(complementary_provenance)
+    provenance = {
+        "llm_calls": llm_calls or 0,
+        "tool_calls": tool_calls or 0,
+        "artifacts_created": _first_non_empty(
+            metrics.get("number_of_artifacts"),
+            metrics.get("number of artifacts"),
+            len(normalized_artifacts),
+        ),
+        "token_usage": token_usage,
+        "lineage": _normalize_lineage(_nested_get(complementary_provenance, ("Lineage",), [])),
+    }
+    if provenance_details:
+        provenance["details"] = provenance_details
 
     return {
         "response": {
@@ -1512,17 +1653,7 @@ def _normalize_agent_result(
             "code": code,
             "runtime": runtime,
         },
-        "provenance": {
-            "llm_calls": llm_calls or 0,
-            "tool_calls": tool_calls or 0,
-            "artifacts_created": _first_non_empty(
-                metrics.get("number_of_artifacts"),
-                metrics.get("number of artifacts"),
-                len(normalized_artifacts),
-            ),
-            "token_usage": token_usage,
-            "lineage": _normalize_lineage(_nested_get(complementary_provenance, ("Lineage",), [])),
-        },
+        "provenance": provenance,
         "reproducibility": reproducibility,
         "diagnostics": _normalize_diagnostics(error_message, complementary),
     }
@@ -2218,10 +2349,14 @@ def stream_agent_from_payload(spec: AgentSpec, state: Dict[str, Any], payload: D
             progress_queue: queue.Queue = queue.Queue()
             sentinel = object()
             worker_state: Dict[str, Any] = {}
+            last_progress: Dict[str, Any] = {}
 
             def _live_progress_callback(event: Dict[str, Any]) -> None:
                 message = event.get("message") if isinstance(event, dict) else None
                 stage = event.get("stage") if isinstance(event, dict) else None
+                if message or stage:
+                    last_progress["message"] = message
+                    last_progress["stage"] = stage
                 _record_stream_debug(
                     "agent_progress_callback",
                     stream_debug_id=stream_debug_id,
@@ -2262,14 +2397,24 @@ def stream_agent_from_payload(spec: AgentSpec, state: Dict[str, Any], payload: D
                     if _task_status(state, task_id) == "canceled":
                         raise RuntimeError("Task was canceled.")
                     elapsed = int(time.time() - last_heartbeat)
-                    heartbeat = _make_event(
-                        "progress",
-                        message=(
+                    last_message = str(last_progress.get("message") or "").strip()
+                    last_stage = str(last_progress.get("stage") or "").strip()
+                    if last_message:
+                        heartbeat_message = f"Still working on {last_stage or 'the current step'}: {last_message}"
+                    else:
+                        heartbeat_message = (
                             "I'm still working. Long LLM calls, code execution, "
                             "or geospatial file processing can take a little while."
-                        ),
+                        )
+                    heartbeat = _make_event(
+                        "progress",
+                        message=heartbeat_message,
                         stage="heartbeat",
-                        payload={"elapsed_seconds_since_last_update": elapsed},
+                        payload={
+                            "elapsed_seconds_since_last_update": elapsed,
+                            "last_stage": last_stage or None,
+                            "last_message": last_message or None,
+                        },
                     )
                     yield json.dumps(heartbeat) + "\n"
                     last_heartbeat = time.time()

@@ -153,6 +153,7 @@ The returned `GasAgentClient` has convenience methods:
 | `status()` | Call `GetAgentStatus`. |
 | `execute_task(...)` | Execute a natural-language task. |
 | `execute_task_request(...)` | Execute a complete canonical GAS request body. |
+| `run_streaming_task(...)` | Execute a streaming task, print events/summary, and return the final result. |
 | `get_task_status(task_id)` | Get task status. |
 | `get_task_result(task_id)` | Get task result. |
 | `wait_for_task(task_id)` | Poll until task completion. |
@@ -212,6 +213,25 @@ client.print_task_summary(final_result)
 Streaming events are useful for long-running agents because the user can see
 progress while the task is running. If an agent does not emit detailed progress,
 the server still streams generic lifecycle events and the final result.
+
+For notebooks, `run_streaming_task(...)` wraps that common pattern:
+
+```python
+result = client.run_streaming_task(
+    data_agent,
+    "Download Pennsylvania county boundaries from Census Bureau.",
+)
+
+# Equivalent agent-bound style:
+result = data_agent.run_streaming_task(
+    "Download Pennsylvania county boundaries from Census Bureau.",
+)
+```
+
+The helper prints stream events, captures the final `task_result` payload,
+prints the task summary, and returns the final result dictionary. Optional
+arguments include `parameters`, `input_datasets`, `timeout`, `print_events`,
+and `print_summary`.
 
 ## Canonical GAS Request Body
 
@@ -310,12 +330,51 @@ artifacts can be large.
 ```python
 artifacts = client.get_artifacts(result)
 urls = client.get_artifact_urls(result)
+csv_urls = client.get_artifact_urls(result, format="csv")
+html_artifacts = client.get_artifacts(result, format="html", role="ndvi_map_html_file")
 ```
+
+For a lightweight readable list in notebooks or terminals:
+
+```python
+client.print_artifacts(result)
+client.print_artifacts(result, format="csv")
+client.print_artifacts(artifacts=html_artifacts)
+```
+
+In Jupyter/IPython notebooks, preview artifacts from any agent:
+
+```python
+client.display_artifacts(result)
+client.display_artifacts(result, format="html")
+```
+
+To display only a selected subset, pass the list returned by
+`get_artifacts(...)`:
+
+```python
+html_artifacts = client.get_artifacts(result, format="html")
+client.display_artifacts(artifacts=html_artifacts)
+```
+
+The helper displays PNG/JPEG/GIF images, embeds HTML artifacts in a light-mode
+iframe, previews CSV files as a small table, previews JSON with truncation,
+renders GeoJSON/vector files as a map plus attribute table when possible, and
+attempts optional previews for GeoTIFF and heavier vector formats when local
+libraries such as `rasterio`, `matplotlib`, or `geopandas` are available. If a
+preview is not possible, it prints a clean link to open or download the
+artifact.
 
 Each artifact is part of the standard GAS task response under
 `outputs.artifacts`. A single task can return multiple artifacts; for example,
 `geospatial_data_retrieval_agent` may return several URLs when one request asks
 for multiple independent datasets.
+
+Artifact `role` values are stable identifiers for client code. Simple
+single-output tasks may use generic roles such as `output` or `dataset`.
+Multi-artifact tasks should use semantic roles such as `ndvi_map_html_file`,
+`validated_plan_json_file`, or `earth_engine_export_task_json_file` so clients
+can select artifacts without relying on filenames.
 
 The `reproducibility.input_artifacts` and
 `reproducibility.output_artifacts` fields are provenance references, not
@@ -362,21 +421,21 @@ A common notebook pattern is:
 from gas_client import GasClient
 
 client = GasClient("http://127.0.0.1:4042")
-
 agent = client.agent("geospatial_data_retrieval_agent")
 
-result = None
-for event in agent.execute_task(
+result = agent.run_streaming_task(
     "Download Pennsylvania county boundaries from Census Bureau.",
-    mode="stream",
     credentials={"OPENAI_API_KEY": "YOUR_OPENAI_API_KEY"},
-):
-    client.print_stream_event(event)
-    if event.get("event") == "task_result":
-        result = event.get("payload")
+)
 
-client.print_task_summary(result)
+client.print_artifacts(result)
+client.display_artifacts(result)
 ```
+
+`run_streaming_task(...)` is the preferred notebook helper for normal demos. It
+prints progress events and the final task summary, then returns the standard
+task result JSON. Use the lower-level `execute_task(..., mode="stream")` loop
+only when you want to teach or customize streaming event handling.
 
 ## Service Chaining Pattern
 
@@ -389,7 +448,10 @@ data_result = client.agent("geospatial_data_retrieval_agent").execute_task(
     mode="sync",
 )
 
-county_url = client.get_artifact_urls(data_result)[0]
+county_urls = client.get_artifact_urls(data_result, format="gpkg")
+if not county_urls:
+    county_urls = client.get_artifact_urls(data_result, format="geojson")
+county_url = county_urls[0]
 
 map_result = client.agent("web_mapping_app_agent").execute_task(
     "Create a choropleth web mapping app.",

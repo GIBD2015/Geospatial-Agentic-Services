@@ -41,9 +41,31 @@ result = agent.execute_task(
 client.print_task_summary(result)
 ```
 
+Use `print_artifacts()` for a lightweight artifact list, and use
+`display_artifacts()` in notebooks to preview common outputs from any GAS
+agent. The display helper shows PNG/JPEG/GIF images, HTML artifacts in a
+light-mode iframe, CSV and JSON previews, GeoJSON/vector maps plus attribute
+tables when possible, and GeoTIFF/GeoPackage artifacts when optional geospatial
+display libraries such as `rasterio`, `matplotlib`, or `geopandas` are already
+installed. Otherwise it falls back to clean artifact links.
+
+```python
+client.print_artifacts(result)
+client.display_artifacts(result)
+
+csv_artifacts = client.get_artifacts(result, format="csv")
+csv_urls = client.get_artifact_urls(result, format="csv")
+client.print_artifacts(result, format="csv")
+client.display_artifacts(artifacts=csv_artifacts)
+```
+
 Some agents return several artifacts from one call. For example,
 `geospatial_data_retrieval_agent` can decompose a multi-dataset request into
 sub-tasks and return all dataset URLs via `client.get_artifact_urls(result)`.
+Artifact `role` values are stable selectors for client code: simple outputs
+may use generic roles such as `output` or `dataset`, while multi-artifact
+workflows use semantic roles such as `ndvi_map_html_file` or
+`validated_plan_json_file`.
 
 Client-level credentials are optional defaults. You can omit them at client
 creation and pass credentials per task, or provide `default_credentials` with
@@ -74,6 +96,20 @@ for event in agent.execute_task(
         result = event.get("payload")
 
 client.print_task_summary(result)
+```
+
+For notebooks, the SDK also provides the same pattern as one helper:
+
+```python
+result = client.run_streaming_task(
+    agent,
+    "Download Pennsylvania county boundaries from Census Bureau.",
+)
+
+# Or, with an agent-bound client:
+result = agent.run_streaming_task(
+    "Download Pennsylvania county boundaries from Census Bureau.",
+)
 ```
 
 ## Canonical GAS Request Body
@@ -124,12 +160,16 @@ Important methods:
 - `agent(agent_id)`
 - `execute_task(agent_id, instructions, mode="sync")`
 - `execute_task_request(agent_id, request_body)`
+- `run_streaming_task(agent_or_agent_id, instructions)`
 - `get_task_status(agent_id, task_id)`
 - `get_task_result(agent_id, task_id)`
 - `wait_for_task(agent_id, task_id)`
 - `cancel_task(agent_id, task_id)`
 - `encode_dataset_file(path)`
 - `get_artifact_urls(result)`
+- `get_artifacts(result)`
+- `print_artifacts(result)`
+- `display_artifacts(result)`
 - `print_stream_event(event)`
 - `print_task_summary(result)`
 

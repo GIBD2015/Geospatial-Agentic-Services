@@ -12,7 +12,10 @@ The notebooks live in the GitHub repository:
 - [Workflow planning agent demo](https://github.com/GIBD2015/geospatial-agentic-services/blob/main/examples_for_using_gas_services/geospatial_workflow_planning_agent_demo.ipynb)
 - [Distributed hospital mapping workflow](https://github.com/GIBD2015/geospatial-agentic-services/blob/main/examples_for_using_gas_services/hospital_mapping_with_distributed_agents_and_multiple_request_modes.ipynb)
 - [Raster DEM workflow](https://github.com/GIBD2015/geospatial-agentic-services/blob/main/examples_for_using_gas_services/raster_agent_dem_workflow.ipynb)
-- [County obesity hotspot workflow](https://github.com/GIBD2015/geospatial-agentic-services/blob/main/examples_for_using_gas_services/county_obesity_hotspot_analysis_workflow.ipynb)
+- [County obesity hotspot workflow](https://github.com/GIBD2015/geospatial-agentic-services/blob/main/examples_for_using_gas_services/county_obesity_hotspot_analysis.ipynb)
+- [County population choropleth workflow](https://github.com/GIBD2015/geospatial-agentic-services/blob/main/examples_for_using_gas_services/county_population_choropleth.ipynb)
+- [CDC earthquake vector mapping workflow](https://github.com/GIBD2015/geospatial-agentic-services/blob/main/examples_for_using_gas_services/cdc_earthquake_vector_mapping.ipynb)
+- [Google Earth Engine agent demo](https://github.com/GIBD2015/geospatial-agentic-services/blob/main/examples_for_using_gas_services/google_earth_engine_agent_demo.ipynb)
 
 For the available services these notebooks call, see
 [Included Agents](included_agents.md). For SDK usage patterns, see

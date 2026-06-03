@@ -9,11 +9,16 @@ backends, or AI orchestrator integrations.
 from __future__ import annotations
 import base64
 from collections.abc import Mapping
+import csv
 from datetime import datetime
+import html
 import json
 from pathlib import Path
 import time
+from io import BytesIO, StringIO
 from urllib.parse import parse_qs, urlencode, urljoin, urlparse
+from urllib.request import urlopen
+import uuid
 import requests
 
 
@@ -44,6 +49,30 @@ class GasAgentClient:
     def execute_task(self, instructions: str, **kwargs):
         """Call ExecuteTask for this agent using natural-language instructions."""
         return self.client.execute_task(self.agent_id, instructions, **kwargs)
+
+    def run_streaming_task(
+        self,
+        instructions: str,
+        *,
+        parameters: dict | None = None,
+        input_datasets=None,
+        timeout: int | None = 1800,
+        print_events: bool = True,
+        print_summary: bool = True,
+        **kwargs,
+    ) -> dict | None:
+        """Execute a streaming task and return the final task result payload."""
+
+        return self.client.run_streaming_task(
+            self,
+            instructions,
+            parameters=parameters,
+            input_datasets=input_datasets,
+            timeout=timeout,
+            print_events=print_events,
+            print_summary=print_summary,
+            **kwargs,
+        )
 
     def execute_task_request(self, request_body: dict, *, timeout: int | None = None):
         """Call ExecuteTask with a complete canonical GAS request body."""
@@ -244,16 +273,24 @@ class GasClient:
                 continue
             spatial_metadata = artifact.get("spatial_metadata") if isinstance(artifact.get("spatial_metadata"), Mapping) else {}
             name = artifact.get("filename") or artifact.get("name") or f"artifact_{index}"
+            role = artifact.get("role")
+            label = artifact.get("label") or role
+            original_filename = artifact.get("original_filename")
             artifact_type = artifact.get("type") or spatial_metadata.get("type")
             artifact_format = artifact.get("format") or artifact.get("mime_type")
             size_bytes = artifact.get("size_bytes")
-            print(f"  {index}. {name}")
+            display_name = f"{label} ({name})" if label else name
+            print(f"  {index}. {display_name}")
             print(
                 "     "
                 f"type={cls._format_display_value(artifact_type)} "
                 f"format={cls._format_display_value(artifact_format)} "
                 f"size={cls._format_display_value(size_bytes)} bytes"
             )
+            if role:
+                print(f"     role={role}")
+            if original_filename:
+                print(f"     original={original_filename}")
             if artifact.get("url"):
                 print(f"     url={artifact['url']}")
 
@@ -285,6 +322,185 @@ class GasClient:
         """Print a compact, human-readable summary of a GAS task result."""
 
         self._print_task_summary(task_result)
+
+    def run_streaming_task(
+        self,
+        agent: str | GasAgentClient,
+        instructions: str,
+        *,
+        parameters: dict | None = None,
+        input_datasets=None,
+        timeout: int | None = 1800,
+        print_events: bool = True,
+        print_summary: bool = True,
+        **kwargs,
+    ) -> dict | None:
+        """Execute a streaming GAS task and return the final task result.
+
+        This is the notebook-friendly wrapper around `execute_task(...,
+        mode="stream")`: it prints stream events, captures the final
+        `task_result` payload, prints the compact task summary, and returns the
+        final result dictionary. Pass either an agent ID string or a
+        `GasAgentClient` returned by `client.agent(...)`.
+        """
+
+        bound_agent = agent if isinstance(agent, GasAgentClient) else self.agent(str(agent))
+        final_result = None
+        for event in bound_agent.execute_task(
+            instructions,
+            mode="stream",
+            input_datasets=input_datasets,
+            parameters=parameters or {},
+            timeout=timeout,
+            **kwargs,
+        ):
+            if print_events:
+                self.print_stream_event(event)
+            if event.get("event") == "task_result":
+                final_result = event.get("payload")
+        if print_summary and final_result is not None:
+            self.print_task_summary(final_result)
+        return final_result
+
+    def print_artifacts(
+        self,
+        task_result: Mapping | None = None,
+        *,
+        artifacts: list[dict] | None = None,
+        format: str | None = None,
+        role: str | None = None,
+    ) -> None:
+        """Print a compact artifact list without requiring notebook libraries."""
+
+        artifact_items = artifacts if artifacts is not None else self.get_artifacts(
+            dict(task_result or {}),
+            format=format,
+            role=role,
+        )
+        print(f"Artifacts: {len(artifact_items)}")
+        for index, artifact in enumerate(artifact_items, start=1):
+            if not isinstance(artifact, Mapping):
+                continue
+            name = artifact.get("filename") or artifact.get("name") or f"artifact_{index}"
+            label = artifact.get("label") or artifact.get("role") or name
+            print(f"{index}. {label}")
+            for key in ("role", "format", "type", "name", "original_filename", "size_bytes", "url"):
+                value = artifact.get(key)
+                if value not in (None, "", [], {}):
+                    print(f"   {key:<17}: {value}")
+
+    def display_artifacts(
+        self,
+        task_result: Mapping | None = None,
+        *,
+        artifacts: list[dict] | None = None,
+        format: str | None = None,
+        role: str | None = None,
+        width: str | int = "100%",
+        height: int = 620,
+        timeout: int = 120,
+        include_links: bool = True,
+        preview_rows: int = 5,
+        max_json_chars: int = 8000,
+    ) -> None:
+        """Display task artifacts in a Jupyter/IPython notebook.
+
+        The helper intentionally imports notebook display dependencies lazily so
+        the SDK remains lightweight for scripts and servers. Pass `artifacts`
+        with the result from `get_artifacts(...)` to display a selected subset.
+        Images, HTML, GeoJSON, CSV, JSON, and optional geospatial previews are
+        shown directly when possible; other artifacts fall back to links.
+        """
+
+        try:
+            from IPython.display import HTML, IFrame, Image, display
+        except Exception as exc:  # pragma: no cover - depends on environment
+            raise GasClientError(
+                "display_artifacts() requires IPython. Install IPython/Jupyter "
+                "or use get_artifact_urls() in non-notebook environments."
+            ) from exc
+
+        artifact_items = artifacts if artifacts is not None else self.get_artifacts(
+            dict(task_result or {}),
+            format=format,
+            role=role,
+        )
+        for artifact in artifact_items:
+            url = artifact.get("url")
+            if not isinstance(url, str) or not url:
+                continue
+
+            display_url = self._absolute_url(url)
+            filename = self._artifact_filename(artifact)
+            kind = self._artifact_visual_kind(artifact)
+            label = artifact.get("label") or artifact.get("role") or filename or "artifact"
+            safe_label = html.escape(str(label))
+            safe_url = html.escape(display_url, quote=True)
+
+            try:
+                if include_links:
+                    display(HTML(f'<p><a href="{safe_url}" target="_blank">Open {safe_label}</a></p>'))
+
+                if kind == "image":
+                    image_format = self._image_display_format(filename, artifact)
+                    image_bytes = self._read_artifact_bytes(display_url, timeout=timeout)
+                    display(Image(data=image_bytes, format=image_format))
+                elif kind == "html":
+                    html_text = self._read_artifact_text(display_url, timeout=timeout)
+                    display(IFrame(src=self._light_html_data_url(html_text), width=width, height=height))
+                elif kind == "geojson":
+                    if not self._display_vector_with_optional_libraries(
+                        display_url,
+                        timeout=timeout,
+                        height=height,
+                        preview_rows=preview_rows,
+                    ):
+                        geojson_text = self._read_artifact_text(display_url, timeout=timeout)
+                        display(HTML(self._geojson_leaflet_html(geojson_text, height=height)))
+                        display(HTML(self._geojson_properties_table_html(geojson_text, preview_rows=preview_rows)))
+                elif kind == "csv":
+                    csv_text = self._read_artifact_text(display_url, timeout=timeout)
+                    display(HTML(self._csv_preview_html(csv_text, preview_rows=preview_rows)))
+                elif kind == "json":
+                    json_text = self._read_artifact_text(display_url, timeout=timeout)
+                    try:
+                        payload = json.loads(json_text)
+                    except Exception:
+                        payload = json_text
+                    display(HTML(self._json_preview_html(payload, max_chars=max_json_chars)))
+                elif kind == "geotiff":
+                    if not self._display_geotiff_with_optional_libraries(display_url, timeout=timeout):
+                        display(
+                            HTML(
+                                "<p>GeoTIFF preview requires optional libraries "
+                                "<code>rasterio</code> and <code>matplotlib</code>. "
+                                f'<a href="{safe_url}" target="_blank">Open/download {safe_label}</a>.</p>'
+                            )
+                        )
+                elif kind == "vector":
+                    if not self._display_vector_with_optional_libraries(
+                        display_url,
+                        timeout=timeout,
+                        height=height,
+                        preview_rows=preview_rows,
+                    ):
+                        display(
+                            HTML(
+                                "<p>Vector preview for this format requires optional library "
+                                "<code>geopandas</code>. "
+                                f'<a href="{safe_url}" target="_blank">Open/download {safe_label}</a>.</p>'
+                            )
+                        )
+                else:
+                    display(HTML(f'<p><a href="{safe_url}" target="_blank">Open artifact: {safe_label}</a></p>'))
+            except Exception as exc:
+                display(
+                    HTML(
+                        f'<p>Could not embed {safe_label}: {html.escape(str(exc))}. '
+                        f'<a href="{safe_url}" target="_blank">Open artifact instead</a>.</p>'
+                    )
+                )
+        return None
 
     # ------------------------------------------------------------------
     # Discovery operations
@@ -664,22 +880,285 @@ class GasClient:
         status = task.get("task", {}).get("status")
         return str(status) if status else None
 
-    def get_artifacts(self, task: dict) -> list[dict]:
+    def get_artifacts(self, task: dict, *, format: str | None = None, role: str | None = None) -> list[dict]:
         """Return artifact metadata from a standard GAS task response."""
 
         artifacts = task.get("outputs", {}).get("artifacts", [])
         if not isinstance(artifacts, list):
             return []
-        return [artifact for artifact in artifacts if isinstance(artifact, dict)]
+        filtered = [artifact for artifact in artifacts if isinstance(artifact, dict)]
+        if format:
+            expected_format = format.lower().lstrip(".")
+            filtered = [
+                artifact
+                for artifact in filtered
+                if str(artifact.get("format") or "").lower().lstrip(".") == expected_format
+            ]
+        if role:
+            filtered = [artifact for artifact in filtered if artifact.get("role") == role]
+        return filtered
 
-    def get_artifact_urls(self, task: dict) -> list[str]:
+    def get_artifact_urls(self, task: dict, *, format: str | None = None, role: str | None = None) -> list[str]:
         """Return artifact URLs from a standard GAS task response."""
 
         return [
             artifact["url"]
-            for artifact in self.get_artifacts(task)
+            for artifact in self.get_artifacts(task, format=format, role=role)
             if isinstance(artifact.get("url"), str)
         ]
+
+    @classmethod
+    def _artifact_filename(cls, artifact: Mapping) -> str:
+        return str(
+            artifact.get("filename")
+            or artifact.get("name")
+            or artifact.get("original_filename")
+            or ""
+        )
+
+    @classmethod
+    def _artifact_visual_kind(cls, artifact: Mapping) -> str:
+        filename = cls._artifact_filename(artifact).lower()
+        artifact_format = str(artifact.get("format") or "").lower().lstrip(".")
+        mime_type = str(artifact.get("mime_type") or "").lower()
+        suffix = Path(filename).suffix.lower().lstrip(".")
+        values = {value for value in (artifact_format, suffix) if value}
+
+        if mime_type.startswith("image/") and "tiff" not in mime_type:
+            return "image"
+        if values & {"png", "jpg", "jpeg", "gif", "webp"}:
+            return "image"
+        if mime_type in {"text/html", "application/xhtml+xml"} or values & {"html", "htm"}:
+            return "html"
+        if mime_type in {"application/geo+json", "application/vnd.geo+json"} or values & {"geojson"}:
+            return "geojson"
+        if mime_type in {"text/csv", "application/csv"} or values & {"csv"}:
+            return "csv"
+        if mime_type in {"application/json", "text/json"} or values & {"json"}:
+            return "json"
+        if values & {"tif", "tiff", "geotiff"} or "geotiff" in mime_type or "tiff" in mime_type:
+            return "geotiff"
+        if values & {"gpkg", "shp", "zip", "kml", "kmz"}:
+            return "vector"
+        return "other"
+
+    @classmethod
+    def _image_display_format(cls, filename: str, artifact: Mapping) -> str:
+        artifact_format = str(artifact.get("format") or "").lower().lstrip(".")
+        suffix = Path(filename).suffix.lower().lstrip(".")
+        image_format = artifact_format or suffix or "png"
+        if image_format == "jpg":
+            return "jpeg"
+        return image_format
+
+    @staticmethod
+    def _read_artifact_bytes(url: str, *, timeout: int) -> bytes:
+        with urlopen(url, timeout=timeout) as response:
+            return response.read()
+
+    @classmethod
+    def _read_artifact_text(cls, url: str, *, timeout: int) -> str:
+        return cls._read_artifact_bytes(url, timeout=timeout).decode("utf-8")
+
+    @staticmethod
+    def _geojson_leaflet_html(geojson_text: str, *, height: int) -> str:
+        map_id = f"gas_geojson_{uuid.uuid4().hex}"
+        escaped_geojson = geojson_text.replace("</", "<\\/")
+        return f"""
+<div id="{map_id}" style="height:{int(height)}px; width:100%; border:1px solid #ddd;"></div>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script>
+(function() {{
+  const geojson = {escaped_geojson};
+  const map = L.map("{map_id}");
+  L.tileLayer("https://tile.openstreetmap.org/{{z}}/{{x}}/{{y}}.png", {{
+    maxZoom: 19,
+    attribution: "&copy; OpenStreetMap contributors"
+  }}).addTo(map);
+  const layer = L.geoJSON(geojson).addTo(map);
+  try {{
+    map.fitBounds(layer.getBounds(), {{padding: [20, 20]}});
+  }} catch (err) {{
+    map.setView([0, 0], 2);
+  }}
+}})();
+</script>
+"""
+
+    @staticmethod
+    def _html_table(rows: list[dict], *, preview_rows: int) -> str:
+        if not rows:
+            return "<p>No tabular preview rows are available.</p>"
+        selected_rows = rows[: max(0, int(preview_rows))]
+        columns: list[str] = []
+        for row in selected_rows:
+            for key in row:
+                if key not in columns:
+                    columns.append(key)
+        if not columns:
+            return "<p>No tabular preview columns are available.</p>"
+        header = "".join(f"<th>{html.escape(str(column))}</th>" for column in columns)
+        body_rows = []
+        for row in selected_rows:
+            cells = "".join(f"<td>{cell}</td>" for cell in [html.escape(str(row.get(column, ""))) for column in columns])
+            body_rows.append(f"<tr>{cells}</tr>")
+        return (
+            "<div style='color-scheme:light;background:#fff;color:#111827;overflow:auto;margin:8px 0;'>"
+            f"<table style='border-collapse:collapse;font-size:13px;'><thead><tr>{header}</tr></thead>"
+            f"<tbody>{''.join(body_rows)}</tbody></table>"
+            "<style>td,th{border:1px solid #d1d5db;padding:4px 6px;text-align:left;}th{background:#f3f4f6;}</style>"
+            "</div>"
+        )
+
+    @classmethod
+    def _csv_preview_html(cls, csv_text: str, *, preview_rows: int) -> str:
+        reader = csv.DictReader(StringIO(csv_text))
+        rows = []
+        for index, row in enumerate(reader):
+            if index >= preview_rows:
+                break
+            rows.append(dict(row))
+        return cls._html_table(rows, preview_rows=preview_rows)
+
+    @staticmethod
+    def _json_preview_html(payload, *, max_chars: int) -> str:
+        if isinstance(payload, str):
+            text = payload
+        else:
+            text = json.dumps(payload, indent=2, ensure_ascii=False, default=str)
+        truncated = len(text) > max_chars
+        text = text[: max(0, int(max_chars))]
+        suffix = "\n... [truncated]" if truncated else ""
+        return (
+            "<pre style='color-scheme:light;background:#fff;color:#111827;"
+            "padding:12px;border:1px solid #d1d5db;overflow:auto;"
+            "max-height:520px;'>"
+            f"{html.escape(text + suffix)}"
+            "</pre>"
+        )
+
+    @classmethod
+    def _geojson_properties_table_html(cls, geojson_text: str, *, preview_rows: int) -> str:
+        try:
+            payload = json.loads(geojson_text)
+        except Exception:
+            return "<p>Could not parse GeoJSON attributes for preview.</p>"
+        features = payload.get("features") if isinstance(payload, Mapping) else None
+        if not isinstance(features, list):
+            return "<p>No GeoJSON feature attributes are available.</p>"
+        rows = []
+        for feature in features[: max(0, int(preview_rows))]:
+            if isinstance(feature, Mapping):
+                properties = feature.get("properties")
+                if isinstance(properties, Mapping):
+                    rows.append(dict(properties))
+        return cls._html_table(rows, preview_rows=preview_rows)
+
+    @staticmethod
+    def _light_html_data_url(html_text: str) -> str:
+        light_style = (
+            "<meta name='color-scheme' content='light'>"
+            "<style>html,body{color-scheme:light;background:#fff;color:#1f2937;}</style>"
+        )
+        if "<head>" in html_text:
+            html_text = html_text.replace("<head>", f"<head>{light_style}", 1)
+        elif "<html>" in html_text:
+            html_text = html_text.replace("<html>", f"<html><head>{light_style}</head>", 1)
+        else:
+            html_text = f"<html><head>{light_style}</head><body>{html_text}</body></html>"
+        encoded = base64.b64encode(html_text.encode("utf-8")).decode("ascii")
+        return f"data:text/html;base64,{encoded}"
+
+    def _display_geotiff_with_optional_libraries(self, url: str, *, timeout: int) -> bool:
+        try:
+            import matplotlib.pyplot as plt
+            import numpy as np
+            import rasterio
+            from rasterio.io import MemoryFile
+            from IPython.display import display
+        except Exception:
+            return False
+
+        image_bytes = self._read_artifact_bytes(url, timeout=timeout)
+        with MemoryFile(image_bytes) as memory_file:
+            with memory_file.open() as dataset:
+                band_count = dataset.count
+                if band_count >= 3:
+                    data = dataset.read([1, 2, 3]).astype("float32")
+                    data = np.moveaxis(data, 0, -1)
+                    low, high = np.nanpercentile(data, [2, 98])
+                    data = np.clip((data - low) / (high - low + 1e-9), 0, 1)
+                    cmap = None
+                else:
+                    data = dataset.read(1)
+                    cmap = "viridis"
+        fig, ax = plt.subplots(figsize=(10, 7))
+        ax.imshow(data, cmap=cmap)
+        ax.set_axis_off()
+        display(fig)
+        plt.close(fig)
+        return True
+
+    def _display_vector_with_optional_libraries(
+        self,
+        url: str,
+        *,
+        timeout: int,
+        height: int,
+        preview_rows: int,
+    ) -> bool:
+        try:
+            import geopandas as gpd
+            import matplotlib.pyplot as plt
+            from IPython.display import HTML, Image, display
+        except Exception:
+            return False
+
+        import tempfile
+
+        suffix = Path(urlparse(url).path).suffix or ".dat"
+        artifact_bytes = self._read_artifact_bytes(url, timeout=timeout)
+        with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as handle:
+            handle.write(artifact_bytes)
+            temp_path = handle.name
+
+        try:
+            gdf = gpd.read_file(temp_path)
+            if gdf.empty:
+                display(HTML("<p>Vector artifact contains no features to preview.</p>"))
+            else:
+                plot_gdf = gdf[gdf.geometry.notna() & ~gdf.geometry.is_empty]
+                if plot_gdf.empty:
+                    display(HTML("<p>Vector artifact has no valid geometry to map.</p>"))
+                else:
+                    plot_gdf = plot_gdf.to_crs(4326) if plot_gdf.crs is not None else plot_gdf
+                    fig, ax = plt.subplots(
+                        figsize=(10, max(4, min(8, height / 110))),
+                        facecolor="white",
+                    )
+                    ax.set_facecolor("white")
+                    plot_gdf.plot(ax=ax, color="#bfdbfe", edgecolor="#1d4ed8", linewidth=1.5, alpha=0.75)
+                    minx, miny, maxx, maxy = plot_gdf.total_bounds
+                    pad_x = max((maxx - minx) * 0.08, 1e-6)
+                    pad_y = max((maxy - miny) * 0.08, 1e-6)
+                    ax.set_xlim(minx - pad_x, maxx + pad_x)
+                    ax.set_ylim(miny - pad_y, maxy + pad_y)
+                    ax.set_aspect("equal", adjustable="box")
+                    ax.set_axis_off()
+                    ax.set_title("Vector preview", fontsize=12, color="#111827")
+                    buffer = BytesIO()
+                    fig.savefig(buffer, format="png", dpi=160, bbox_inches="tight", facecolor="white")
+                    plt.close(fig)
+                    display(Image(data=buffer.getvalue(), format="png"))
+            preview = gdf.drop(columns=[gdf.geometry.name], errors="ignore").head(preview_rows)
+            display(HTML(self._html_table(preview.astype(str).to_dict(orient="records"), preview_rows=preview_rows)))
+        finally:
+            try:
+                Path(temp_path).unlink(missing_ok=True)
+            except Exception:
+                pass
+        return True
 
     def get_value_by_key(self, data, keyword, parent_path=None) -> list[dict]:
         """Recursively search a JSON-like object for keys that match a keyword."""

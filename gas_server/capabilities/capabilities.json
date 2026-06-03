@@ -39,7 +39,7 @@
       "url": "https://www.geospatial-agentic-services.online/agents/{agent_id}/tasks",
       "description": "Executes an agent task using the canonical GAS ExecuteTask request body. Supports sync, async, and stream modes.",
       "request_schema": "execute_task_request.schema.json",
-      "response_schema": "agent_response.schema.json"
+      "response_schema": "task_response.schema.json"
     },
     {
       "operation_id": "get_task_status",
@@ -89,6 +89,11 @@
       "agent_id": "usgs_earthquake_agent",
       "name": "USGS Earthquake Agent",
       "DescribeAgent": "https://www.geospatial-agentic-services.online/?SERVICE=GAS&VERSION=1.0.0&REQUEST=DescribeAgent&agent_id=usgs_earthquake_agent"
+    },
+    {
+      "agent_id": "google_earth_engine_agent",
+      "name": "Google Earth Engine Agent",
+      "DescribeAgent": "https://www.geospatial-agentic-services.online/?SERVICE=GAS&VERSION=1.0.0&REQUEST=DescribeAgent&agent_id=google_earth_engine_agent"
     },
     {
       "agent_id": "exploratory_spatial_data_analysis_agent",

@@ -359,9 +359,32 @@ def list_registry():
             sep = "\t" if ext == ".tsv" else ","
             return pd.read_csv(path, sep=sep)
         try:
-            return gpd.read_file(path)
+            data = gpd.read_file(path)
+            return self._repair_degree_like_projected_crs(data)
         except Exception:
             return pd.read_csv(path)
+
+    def _repair_degree_like_projected_crs(self, gdf: gpd.GeoDataFrame) -> gpd.GeoDataFrame:
+        if not isinstance(gdf, gpd.GeoDataFrame) or gdf.empty or "geometry" not in gdf:
+            return gdf
+        try:
+            minx, miny, maxx, maxy = [float(value) for value in gdf.total_bounds]
+        except Exception:
+            return gdf
+
+        bounds_look_geographic = -180 <= minx <= 180 and -180 <= maxx <= 180 and -90 <= miny <= 90 and -90 <= maxy <= 90
+        if not bounds_look_geographic:
+            return gdf
+
+        if gdf.crs is None:
+            return gdf.set_crs("EPSG:4326")
+
+        try:
+            if gdf.crs.is_projected:
+                return gdf.set_crs("EPSG:4326", allow_override=True)
+        except Exception:
+            pass
+        return gdf
 
     def _load_input_datasets(self, dataset_paths: List[str]) -> List[Dict[str, Any]]:
         datasets = []
@@ -524,9 +547,123 @@ def list_registry():
             },
         }
 
+    def _deterministic_result_validation_errors(self, query: str, result: Dict[str, Any]) -> List[str]:
+        request = (query or "").lower()
+        output_path = (result.get("outputs") or {}).get("dataset_path")
+        if not output_path or not os.path.exists(output_path):
+            return ["The deterministic workflow did not create a readable output artifact."]
+
+        try:
+            output = gpd.read_file(output_path)
+        except Exception:
+            try:
+                output = pd.read_csv(output_path)
+            except Exception as exc:
+                return [f"The deterministic output artifact could not be read for validation: {exc}"]
+
+        columns = {str(column) for column in getattr(output, "columns", [])}
+        normalized_columns = {column.lower(): column for column in columns}
+        script_text = str(result.get("script") or "").lower()
+        summary_text = str((result.get("outputs") or {}).get("text") or "").lower()
+        evidence_text = f"{script_text}\n{summary_text}"
+        errors: List[str] = []
+
+        required_columns = self._requested_output_columns_for_validation(query)
+        missing_columns = [
+            column for column in required_columns
+            if column.lower() not in normalized_columns
+        ]
+        if missing_columns:
+            errors.append(f"Missing requested output field(s): {', '.join(sorted(missing_columns))}.")
+
+        operation_requirements = {
+            "buffer": ("buffer",),
+            "dissolve": ("dissolve", "union"),
+            "intersect": ("intersect", "intersection", "overlay"),
+        }
+        for requested_term, evidence_terms in operation_requirements.items():
+            if self._has_any_term(request, (requested_term,)):
+                if not any(term in evidence_text for term in evidence_terms):
+                    errors.append(f"The deterministic workflow did not show evidence of the requested {requested_term} operation.")
+
+        if self._has_any_term(request, ("coverage",)) and "coverage_pct" not in normalized_columns:
+            errors.append("The request asked for coverage analysis but the output lacks coverage_pct.")
+
+        if self._has_any_term(request, ("count", "counts", "number of", "how many")):
+            count_like_columns = [column for column in columns if str(column).lower().endswith("_count")]
+            if not count_like_columns and "feature_count" not in normalized_columns:
+                errors.append("The request asked for counts but the output lacks a count field.")
+
+        if self._has_any_term(request, ("centroid",)):
+            if "centroid_lon" not in normalized_columns or "centroid_lat" not in normalized_columns:
+                errors.append("The request asked for centroid fields but the output lacks centroid_lon/centroid_lat.")
+
+        if self._has_any_term(request, ("length",)):
+            if "length_m" not in normalized_columns and "length_km" not in normalized_columns:
+                errors.append("The request asked for length measurements but the output lacks length fields.")
+
+        area_only_request = self._has_any_term(request, ("area",)) and not self._has_any_term(
+            request,
+            ("coverage", "intersect", "intersection", "buffer", "dissolve"),
+        )
+        if area_only_request and "area_sq_m" not in normalized_columns and "area_sq_km" not in normalized_columns:
+            errors.append("The request asked for area measurements but the output lacks area fields.")
+
+        return errors
+
+    def _requested_output_columns_for_validation(self, query: str) -> set[str]:
+        request = query or ""
+        columns: set[str] = set()
+        reserved_words = {
+            "as",
+            "to",
+            "the",
+            "new",
+            "field",
+            "fields",
+            "column",
+            "columns",
+            "value",
+            "rate",
+            "result",
+        }
+
+        explicit_field_patterns = (
+            r"\b(?:new\s+numeric\s+)?field\s+([A-Za-z_][A-Za-z0-9_]*)\b",
+            r"\b(?:new\s+numeric\s+)?column\s+([A-Za-z_][A-Za-z0-9_]*)\b",
+            r"\b(?:with|include|return)\s+(?:the\s+)?(?:new\s+)?([A-Za-z_][A-Za-z0-9_]*)\s+field\b",
+            r"\b(?:with|include|return)\s+(?:the\s+)?(?:new\s+)?([A-Za-z_][A-Za-z0-9_]*)\s+column\b",
+        )
+        for pattern in explicit_field_patterns:
+            for match in re.finditer(pattern, request, flags=re.IGNORECASE):
+                candidate = match.group(1)
+                if candidate.lower() not in reserved_words:
+                    columns.add(candidate)
+
+        for token in re.findall(r"\b[A-Za-z][A-Za-z0-9]*_[A-Za-z0-9_]*\b", request):
+            columns.add(token)
+
+        if re.search(r"\bcoverage_pct\b", request, flags=re.IGNORECASE):
+            columns.add("coverage_pct")
+        if re.search(r"\bcovered_area_m2\b", request, flags=re.IGNORECASE):
+            columns.add("covered_area_m2")
+        if re.search(r"\bcounty_area_m2\b", request, flags=re.IGNORECASE):
+            columns.add("county_area_m2")
+
+        return columns
+
     def _try_deterministic_workflow(self, query: str, dataset_paths: List[str], start_time: float, progress_callback=None):
         request = (query or "").lower()
         if not dataset_paths:
+            return None
+
+        if self._explicitly_requests_model_workflow(request):
+            self._emit_progress(
+                progress_callback,
+                stage="planning",
+                message="The request explicitly asks for a model-driven vector workflow, so I will skip the deterministic GeoPandas fast path.",
+                data={"dataset_count": len(dataset_paths)},
+            )
             return None
 
         common_terms = (
@@ -586,8 +723,8 @@ def list_registry():
             if result:
                 return result
 
-        if self._has_any_term(request, ("area", "length", "centroid")) and geo_datasets:
-            result = self._try_add_geometry_measurements(query, geo_datasets[0], start_time, progress_callback)
+        if self._looks_like_buffered_point_coverage(request) and len(geo_datasets) >= 2:
+            result = self._try_buffered_point_coverage(query, geo_datasets, start_time, progress_callback)
             if result:
                 return result
 
@@ -624,6 +761,11 @@ def list_registry():
         if self._has_any_term(request, ("clip", "intersect", "intersection")) and len(geo_datasets) >= 2:
             return self._try_overlay(query, geo_datasets, start_time, progress_callback)
 
+        if self._has_any_term(request, ("area", "length", "centroid")) and geo_datasets:
+            result = self._try_add_geometry_measurements(query, geo_datasets[0], start_time, progress_callback)
+            if result:
+                return result
+
         return None
 
     def _has_any_term(self, request: str, terms: Tuple[str, ...]) -> bool:
@@ -632,6 +774,45 @@ def list_registry():
             if re.search(rf"\b{escaped}\b", request):
                 return True
         return False
+
+    def _explicitly_requests_model_workflow(self, request: str) -> bool:
+        return self._has_any_term(
+            request,
+            (
+                "use llm",
+                "use the llm",
+                "llm workflow",
+                "model-driven",
+                "model driven",
+                "use model",
+                "use the model",
+                "model-backed",
+                "model backed",
+                "not deterministic",
+                "avoid deterministic",
+                "do not use deterministic",
+                "skip deterministic",
+            ),
+        )
+
+    def _looks_like_buffered_point_coverage(self, request: str) -> bool:
+        return (
+            self._has_any_term(request, ("buffer",))
+            and self._has_any_term(request, ("intersect", "intersection", "coverage"))
+            and (
+                "coverage_pct" in request
+                or "covered_area" in request
+                or "coverage percent" in request
+                or "coverage percentage" in request
+                or "coverage polygon" in request
+            )
+        )
+
+    def _requested_epsg_crs(self, query: str) -> Optional[str]:
+        match = re.search(r"\bepsg\s*:\s*(\d{4,6})\b", query or "", flags=re.IGNORECASE)
+        if match:
+            return f"EPSG:{match.group(1)}"
+        return None
 
     def _numeric_work_crs(self, gdf: gpd.GeoDataFrame):
         if gdf.crs is None:
@@ -666,6 +847,50 @@ def list_registry():
             if normalized and normalized in re.sub(r"[^a-z0-9]", "", request):
                 return column
         return None
+
+    def _requested_join_output_column(self, query: str) -> Optional[str]:
+        patterns = (
+            r"\b(?:rename|name|call)\s+(?:the\s+)?(?:joined\s+)?(?:\w+\s+){0,5}(?:column|field)\s+(?:to|as)\s+([A-Za-z_][A-Za-z0-9_]*)\b",
+            r"\b(?:rename|name|call)\s+(?:the\s+)?(?:joined\s+)?(?:\w+\s+){0,5}(?:value|rate|prevalence)\s+(?:column|field)?\s*(?:to|as)\s+([A-Za-z_][A-Za-z0-9_]*)\b",
+            r"\b(?:output|joined)\s+(?:value\s+)?(?:column|field)\s+(?:named|called)\s+([A-Za-z_][A-Za-z0-9_]*)\b",
+        )
+        for pattern in patterns:
+            match = re.search(pattern, query or "", flags=re.IGNORECASE)
+            if match:
+                return match.group(1)
+        return None
+
+    def _rename_requested_join_value_column(
+        self,
+        joined: pd.DataFrame,
+        joined_columns: List[str],
+        query: str,
+    ) -> Tuple[pd.DataFrame, List[str], Optional[Tuple[str, str]]]:
+        target = self._requested_join_output_column(query)
+        if not target or target in joined.columns:
+            return joined, joined_columns, None
+
+        candidates = [column for column in joined_columns if column in joined.columns]
+        if not candidates:
+            return joined, joined_columns, None
+
+        normalized_query = re.sub(r"[^a-z0-9]+", " ", (query or "").lower())
+        preferred_tokens = ("obesity", "prevalence", "rate", "value", "estimate", "data_value")
+
+        def score(column: str) -> Tuple[int, int, int]:
+            text = str(column).lower()
+            token_score = sum(1 for token in preferred_tokens if token in text or token.replace("_", " ") in normalized_query)
+            numeric_score = int(pd.api.types.is_numeric_dtype(joined[column]))
+            non_null_score = int(joined[column].notna().any())
+            return (token_score, numeric_score, non_null_score)
+
+        source = max(candidates, key=score)
+        if score(source) == (0, 0, 0):
+            return joined, joined_columns, None
+
+        renamed = joined.rename(columns={source: target})
+        renamed_columns = [target if column == source else column for column in joined_columns]
+        return renamed, renamed_columns, (source, target)
 
     def _try_format_conversion(self, query, dataset_item, start_time, progress_callback=None):
         data = dataset_item["data"].copy()
@@ -912,6 +1137,7 @@ def list_registry():
             column for column in right_reduced.columns
             if column != right_key and column not in {plan["right_column"]}
         ]
+        joined, joined_columns, rename_info = self._rename_requested_join_value_column(joined, joined_columns, query)
         matched_rows = 0
         if joined_columns:
             matched_rows = int(joined[joined_columns].notna().any(axis=1).sum())
@@ -930,6 +1156,8 @@ def list_registry():
             f"using {plan['left_column']} = {plan['right_column']}. "
             f"Matched {matched_rows} output feature(s) and saved the result as {label}."
         )
+        if rename_info:
+            summary += f" Renamed joined column {rename_info[0]} to {rename_info[1]}."
         script = (
             "import geopandas as gpd\nimport pandas as pd\n"
             f"left = gpd.read_file({left_item['path']!r})\n"
@@ -946,6 +1174,7 @@ def list_registry():
                 "right_column": plan["right_column"],
                 "matched_rows": matched_rows,
                 "output_features": len(joined),
+                "renamed_column": {"from": rename_info[0], "to": rename_info[1]} if rename_info else None,
             },
         )
         return self._build_direct_response(start_time, query, [item["path"] for item in datasets], output_path, metadata, summary, script, progress_callback)
@@ -1030,6 +1259,101 @@ def list_registry():
                 "point_features": len(points),
                 "count_field": count_field,
                 "matched_points": total_points,
+            },
+        )
+        return self._build_direct_response(
+            start_time,
+            query,
+            [polygon_item["path"], point_item["path"]],
+            output_path,
+            metadata,
+            summary,
+            script,
+            progress_callback,
+        )
+
+    def _try_buffered_point_coverage(self, query, geo_datasets, start_time, progress_callback=None):
+        polygon_items = [
+            item for item in geo_datasets
+            if "polygon" in self._geometry_family(item["data"])
+        ]
+        point_items = [
+            item for item in geo_datasets
+            if "point" in self._geometry_family(item["data"])
+        ]
+        if not polygon_items or not point_items:
+            return None
+
+        distance_m = self._parse_distance_meters(query)
+        if not distance_m:
+            return None
+
+        polygon_item = polygon_items[0]
+        point_item = point_items[0]
+        polygons = polygon_item["data"].copy()
+        points = point_item["data"].copy()
+        if polygons.empty or points.empty:
+            return None
+
+        if polygons.crs is None:
+            polygons = polygons.set_crs("EPSG:4326")
+        if points.crs is None:
+            points = points.set_crs("EPSG:4326")
+
+        work_crs = self._requested_epsg_crs(query) or "EPSG:5070"
+        polygons_work = polygons.to_crs(work_crs).reset_index(drop=True)
+        points_work = points.to_crs(work_crs)
+
+        polygon_index_name = "__gas_polygon_index"
+        polygons_work[polygon_index_name] = polygons_work.index
+        polygons_work["county_area_m2"] = polygons_work.geometry.area
+
+        buffers = points_work.geometry.buffer(distance_m)
+        buffer_union = buffers.union_all() if hasattr(buffers, "union_all") else buffers.unary_union
+        result_work = polygons_work.copy()
+        result_work["covered_area_m2"] = 0.0
+        if not buffer_union.is_empty:
+            coverage = gpd.GeoDataFrame({"geometry": [buffer_union]}, crs=work_crs)
+            intersections = gpd.overlay(
+                polygons_work[[polygon_index_name, "geometry"]],
+                coverage,
+                how="intersection",
+            )
+            if not intersections.empty:
+                covered = intersections.geometry.area.groupby(intersections[polygon_index_name]).sum()
+                result_work["covered_area_m2"] = result_work[polygon_index_name].map(covered).fillna(0.0)
+
+        with np.errstate(divide="ignore", invalid="ignore"):
+            coverage_pct = result_work["covered_area_m2"] / result_work["county_area_m2"] * 100.0
+        result_work["coverage_pct"] = coverage_pct.replace([np.inf, -np.inf], np.nan).fillna(0.0).clip(0, 100)
+        result_work = result_work.drop(columns=[polygon_index_name])
+        result = result_work.to_crs("EPSG:4326")
+
+        output_path, metadata, label = self._save_artifact_direct(result, query)
+        covered_counties = int((result["coverage_pct"] > 0).sum())
+        summary = (
+            f"Computed buffered point coverage for {len(result)} polygon feature(s) using "
+            f"{len(points)} point feature(s), a {distance_m:,.0f}-meter buffer, and {work_crs}. "
+            f"Saved {label} with covered_area_m2, county_area_m2, and coverage_pct fields; "
+            f"{covered_counties} polygon feature(s) have nonzero coverage."
+        )
+        script = (
+            "import geopandas as gpd\n"
+            f"# Loaded polygon and point inputs, reprojected to {work_crs}, buffered points by {distance_m:.3f} meters, "
+            "dissolved buffers, intersected coverage with polygons, calculated covered_area_m2, "
+            "county_area_m2, and coverage_pct, then reprojected to EPSG:4326.\n"
+        )
+        self._emit_progress(
+            progress_callback,
+            stage="analysis_execution",
+            message=summary,
+            data={
+                "operation": "buffered_point_coverage",
+                "polygon_features": len(result),
+                "point_features": len(points),
+                "distance_m": distance_m,
+                "work_crs": work_crs,
+                "covered_polygons": covered_counties,
             },
         )
         return self._build_direct_response(
@@ -1238,7 +1562,19 @@ def list_registry():
             progress_callback=progress_callback,
         )
         if direct_result:
-            return direct_result
+            validation_errors = self._deterministic_result_validation_errors(user_query, direct_result)
+            if not validation_errors:
+                return direct_result
+            self._emit_progress(
+                progress_callback,
+                stage="validation",
+                message=(
+                    "The deterministic GeoPandas shortcut produced an artifact, but validation found it did not "
+                    "satisfy the request. I will continue with the model-backed workflow instead."
+                ),
+                data={"validation_errors": validation_errors},
+            )
+            self.number_of_artifacts = 0
 
         # Inject paths and initial registry state into first user message
         user_content = f"Task: {user_query}\nFiles available: {dataset_path}\n\nInitial registry is empty."

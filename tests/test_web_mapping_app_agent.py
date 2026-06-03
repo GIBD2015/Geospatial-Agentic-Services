@@ -102,6 +102,65 @@ def test_web_mapping_app_prepares_projected_vectors_for_leaflet(tmp_path, monkey
     assert -90 <= maxy <= 90
 
 
+def test_web_mapping_app_prepares_epoch_millisecond_time_fields_for_leaflet(tmp_path, monkeypatch):
+    import geopandas as gpd
+    from shapely.geometry import Point
+
+    monkeypatch.setattr(web_mapping_app_agent, "DATA_DIR", tmp_path / "Data")
+    dataset_path = tmp_path / "earthquakes.geojson"
+    gdf = gpd.GeoDataFrame(
+        {
+            "event_time": [1780357269610],
+            "magnitude": [2.66],
+            "place": ["18 km WSW of Johannesburg, CA"],
+            "geometry": [Point(-117.813333333333, 35.3115)],
+        },
+        crs="EPSG:4326",
+    )
+    gdf.to_file(dataset_path, driver="GeoJSON")
+
+    agent = web_mapping_app_agent.WebMappingAppAgent(api_key=None)
+    prepared_paths = agent._prepare_leaflet_dataset_paths([str(dataset_path)])
+    prepared_payload = json.loads(open(prepared_paths[0], encoding="utf-8").read())
+
+    event_time = prepared_payload["features"][0]["properties"]["event_time"]
+    assert isinstance(event_time, str)
+    assert event_time.startswith("2026-06-01")
+    assert event_time.endswith("UTC")
+    assert not event_time.startswith("1970")
+
+
+def test_web_mapping_app_prompt_instructs_epoch_unit_handling(tmp_path):
+    agent = web_mapping_app_agent.WebMappingAppAgent(api_key=None)
+
+    messages = agent._build_prompt(
+        "Map earthquake event_time values",
+        ["earthquakes.geojson"],
+        [{"type": "vector", "columns": ["event_time", "magnitude"]}],
+        str(tmp_path / "map.html"),
+    )
+    prompt_text = "\n".join(message["content"] for message in messages)
+
+    assert "13-digit values are milliseconds" in prompt_text
+    assert 'pd.to_datetime(values, unit="ms", utc=True)' in prompt_text
+    assert "new Date(value) expects milliseconds" in prompt_text
+
+
+def test_web_mapping_app_prompt_keeps_map_legend_title_with_legend_box(tmp_path):
+    agent = web_mapping_app_agent.WebMappingAppAgent(api_key=None)
+
+    messages = agent._build_prompt(
+        "Map earthquake events with a magnitude legend",
+        ["earthquakes.geojson"],
+        [{"type": "vector", "columns": ["magnitude"]}],
+        str(tmp_path / "map.html"),
+    )
+    prompt_text = "\n".join(message["content"] for message in messages)
+
+    assert "legend title inside the same legend box" in prompt_text
+    assert 'Do not put a detached "Legend" title in the left panel' in prompt_text
+
+
 def test_web_mapping_app_validation_rejects_projected_leaflet_bounds(tmp_path):
     html_path = tmp_path / "bad_bounds.html"
     html_path.write_text(
@@ -313,6 +372,33 @@ def test_web_mapping_app_postprocess_does_not_target_app_containers(tmp_path):
     assert "isLikelyAppContainer" in html
     assert "app-|app_|shell|sidebar|panel|header|map-wrap|map_container" in html
     assert 'document.querySelectorAll("div")' not in html
+
+
+def test_web_mapping_app_postprocess_preserves_separate_sidebar_app_container(tmp_path):
+    html_path = tmp_path / "separate_sidebar.html"
+    html_path.write_text(
+        """
+        <html>
+          <head><title>App</title></head>
+          <body>
+            <div class="folium-map" id="map"></div>
+            <div class="app-container">
+              <div class="sidebar">Earthquake summary and legend</div>
+            </div>
+            <div class="leaflet-control-layers">Layers</div>
+            <script>L.control.layers({}, {}, {collapsed:false}).addTo(map);</script>
+          </body>
+        </html>
+        """,
+        encoding="utf-8",
+    )
+    agent = web_mapping_app_agent.WebMappingAppAgent(api_key=None)
+
+    agent._postprocess_html_output(str(html_path))
+
+    html = html_path.read_text(encoding="utf-8")
+    assert 'el.classList.contains("app-container") && el.querySelector(".sidebar")' in html
+    assert 'el.style.setProperty("max-height", "34vh", "important")' in html
 
 
 def test_web_mapping_app_postprocess_repairs_overlay_container_flow(tmp_path):

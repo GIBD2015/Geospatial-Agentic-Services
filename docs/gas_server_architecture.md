@@ -542,6 +542,14 @@ workflow-chaining use cases. They are not a second artifact delivery channel;
 download URLs or encoded base64 payloads are delivered through
 `outputs.artifacts`.
 
+Artifact roles are part of the client-facing contract. The service layer
+normalizes generic implementation keys such as `output_file` or `output_path`
+to the role `output`, and `dataset_path` or `dataset_file` to the role
+`dataset`. Agents that return multiple artifacts should use semantic roles,
+for example `ndvi_map_html_file`, `validated_plan_json_file`, or
+`earth_engine_export_task_json_file`, so clients can select artifacts without
+guessing from filenames.
+
 ## Model And Credential Design
 
 Each agent has a developer-selected default model. The default is advertised in

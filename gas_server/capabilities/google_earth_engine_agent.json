@@ -1,0 +1,504 @@
+{
+  "$schema": "https://www.geospatial-agentic-services.online/schemas/describe_agent.schema.json",
+  "profile": {
+    "agent_id": "google_earth_engine_agent",
+    "name": "Google Earth Engine Agent",
+    "description": "An LLM-planned Google Earth Engine agent that exposes focused remote-sensing and environmental data processing workflows through the standard GAS interface. The model produces a constrained JSON plan, and the agent validates and executes that plan with trusted Earth Engine Python API tools.",
+    "version": "1.0.0",
+    "base_url": "https://www.geospatial-agentic-services.online/agents/google_earth_engine_agent",
+    "last_updated": "2026-06-01",
+    "provider": {
+      "name": "Geoinformation and Big Data Research Lab (GIBD)",
+      "website": "https://giscience.psu.edu",
+      "contacts": [
+        {
+          "name": "Zhenlong Li",
+          "email": "zhenlong@psu.edu"
+        }
+      ]
+    },
+    "default_model": "gpt-5.2"
+  },
+  "keywords": [
+    "Google Earth Engine",
+    "GEE",
+    "remote sensing",
+    "NDVI",
+    "NDVI time series",
+    "Sentinel-2",
+    "Landsat",
+    "climate time series",
+    "CHIRPS",
+    "GRIDMET",
+    "Daymet",
+    "ERA5-Land",
+    "TerraClimate",
+    "land cover",
+    "land-cover map",
+    "surface water",
+    "water occurrence",
+    "flood water",
+    "JRC Global Surface Water",
+    "Sentinel-1",
+    "Earth Engine export"
+  ],
+  "skills": [
+    {
+      "skill_id": "compute_ndvi_summary",
+      "name": "Compute NDVI Summary",
+      "description": "Uses Sentinel-2 or Landsat surface reflectance imagery to compute NDVI over a requested region and date range, then returns mean, minimum, maximum, and standard deviation statistics in the task response plus requested JSON and/or CSV artifacts.",
+      "constraints": {
+        "spatial": "Accepts uploaded vector regions, explicit bbox parameters, or natural-language place names. Region priority is: valid vector input dataset first; otherwise parameters.bbox; otherwise place-name lookup/geocoding.",
+        "temporal": "Uses the requested date range against the selected Earth Engine image collection.",
+        "other": [
+          "Supported datasets are COPERNICUS/S2_SR_HARMONIZED, LANDSAT/LC08/C02/T1_L2, and LANDSAT/LC09/C02/T1_L2.",
+          "Cloud filtering uses dataset metadata fields and a user or model selected cloud percentage threshold.",
+          "The LLM plans the workflow, but the agent executes a fixed trusted NDVI tool."
+        ]
+      }
+    },
+    {
+      "skill_id": "create_ndvi_time_series",
+      "name": "Create NDVI Time Series",
+      "description": "Creates a daily regional NDVI time series from Sentinel-2 or Landsat surface reflectance imagery. For each date with imagery, the agent cloud-masks the collection, builds a daily median NDVI image, reduces it over the requested region, and returns the requested JSON, CSV, and/or HTML line-chart artifacts.",
+      "constraints": {
+        "spatial": "Accepts uploaded vector regions, explicit bbox parameters, or natural-language place names. Region priority is: valid vector input dataset first; otherwise parameters.bbox; otherwise place-name lookup/geocoding.",
+        "temporal": "Returns one row per date with available imagery in the requested date range.",
+        "other": [
+          "Supported datasets are COPERNICUS/S2_SR_HARMONIZED, LANDSAT/LC08/C02/T1_L2, and LANDSAT/LC09/C02/T1_L2.",
+          "When requested, the CSV includes date, contributing image count, mean NDVI, minimum NDVI, maximum NDVI, and NDVI standard deviation.",
+          "When requested, the HTML chart visualizes mean daily NDVI over time."
+        ]
+      }
+    },
+    {
+      "skill_id": "create_ndvi_map",
+      "name": "Create NDVI Map",
+      "description": "Creates an NDVI visualization workflow. The preferred preview output is an Earth Engine thumbnail or map tile URL for the actual clipped NDVI raster; the agent also returns a browser-ready HTML Folium map artifact with the Earth Engine NDVI tile layer and analysis boundary.",
+      "constraints": {
+        "spatial": "Accepts uploaded vector regions, explicit bbox parameters, or natural-language place names. Region priority is: valid vector input dataset first; otherwise parameters.bbox; otherwise place-name lookup/geocoding.",
+        "other": [
+          "Earth Engine thumbnail/map tile URLs are preview links rather than durable exported files.",
+          "The HTML map displays the actual NDVI raster preview from Earth Engine rather than a vector grid approximation.",
+          "NDVI map previews relax scene-level cloud metadata filtering and apply per-pixel cloud/shadow/snow masks before median compositing, because strict scene-level filters can remove neighboring satellite tiles and leave partial region coverage.",
+          "If the preview is useful, call the export skill to create a durable GeoTIFF raster."
+        ]
+      }
+    },
+    {
+      "skill_id": "create_cloud_filtered_composite",
+      "name": "Create Cloud-Filtered Composite",
+      "description": "Builds a cloud-filtered median optical image composite from Sentinel-2 or Landsat and returns processing metadata, Earth Engine thumbnail/map tile preview URLs, and a browser-ready HTML preview wrapping the composite thumbnail. Export task creation is separate and opt-in.",
+      "constraints": {
+        "other": [
+          "Earth Engine thumbnail/map tile URLs are the preferred first delivery mode for visual inspection.",
+          "When visualization URLs are available, the agent also writes an HTML artifact for notebook/browser display.",
+          "Composite previews relax scene-level cloud metadata filtering and apply per-pixel cloud/shadow/snow masks before median compositing, because strict scene-level filters can remove neighboring satellite tiles and leave partial region coverage.",
+                    "Preview workflows return Earth Engine visualization URLs and metadata rather than downloading full imagery through GAS.",
+          "Export tasks are started asynchronously by Earth Engine and may require follow-up monitoring in Earth Engine or the configured export destination."
+        ]
+      }
+    },
+    {
+      "skill_id": "create_climate_time_series",
+      "name": "Create Climate Variable Time Series",
+      "description": "Creates regional climate and environmental variable time series from Earth Engine collections such as CHIRPS, GRIDMET, Daymet, ERA5-Land, and TerraClimate. Supports precipitation, temperature, humidity, wind, solar radiation, evapotranspiration, soil moisture, and drought-oriented variables where available, returning the requested JSON, CSV, and/or HTML line-chart artifacts.",
+      "constraints": {
+        "other": [
+          "Dataset selection is agentic: GRIDMET is preferred for CONUS daily weather/climate, Daymet for North America daily local climate, CHIRPS for global precipitation-only, ERA5-Land for broad global daily variables, and TerraClimate for monthly climate/water-balance/drought variables.",
+          "The agent reduces each image over the requested region and returns one time-series row per image/time step.",
+          "Results depend on the selected collection's native spatial/temporal resolution and variable definitions."
+        ]
+      }
+    },
+    {
+      "skill_id": "summarize_land_cover_area",
+      "name": "Summarize Land-Cover Area",
+      "description": "Computes class area summaries in square kilometers from ESA WorldCover or Dynamic World over the requested region.",
+      "constraints": {
+        "other": [
+          "ESA WorldCover uses the selected static map collection.",
+          "Dynamic World summaries use the modal class over the requested date range.",
+          "Class area summaries are screening-level outputs and should be reviewed for scale and classification suitability."
+        ]
+      }
+    },
+    {
+      "skill_id": "create_land_cover_map",
+      "name": "Create Land-Cover Map",
+      "description": "Creates a classified land-cover raster preview from ESA WorldCover or Dynamic World and returns an Earth Engine thumbnail artifact, map tile preview metadata, an interactive HTML map, and a class-color legend.",
+      "constraints": {
+        "spatial": "Accepts uploaded vector regions, explicit bbox parameters, or natural-language place names. Region priority is: valid vector input dataset first; otherwise parameters.bbox; otherwise place-name lookup/geocoding.",
+        "other": [
+          "ESA WorldCover uses the selected static map collection.",
+          "Dynamic World map previews use the modal class over the requested date range.",
+          "Earth Engine thumbnail/map tile URLs are preview links rather than durable exported files.",
+          "If the preview is useful, call the export skill to create a durable GeoTIFF raster."
+        ]
+      }
+    },
+    {
+      "skill_id": "create_surface_water_map",
+      "name": "Create Surface-Water Map",
+      "description": "Maps surface-water occurrence or recent flood water using JRC Global Surface Water or Sentinel-1 SAR. The agent returns Earth Engine preview metadata, a browser-ready HTML map, CSV regional exposure summary fields such as mapped water area, and GeoJSON water polygons when requested.",
+      "constraints": {
+        "spatial": "Accepts uploaded vector regions, explicit bbox parameters, or natural-language place names. Region priority is: valid vector input dataset first; otherwise parameters.bbox; otherwise place-name lookup/geocoding.",
+        "temporal": "JRC Global Surface Water occurrence is a long-term occurrence layer. Sentinel-1 flood-water mapping uses the requested date range.",
+        "other": [
+          "Supported datasets are JRC/GSW1_4/GlobalSurfaceWater and COPERNICUS/S1_GRD.",
+          "JRC occurrence mapping thresholds the occurrence band; default threshold is 50 percent unless parameters.water_occurrence_threshold is supplied.",
+          "Sentinel-1 flood-water mapping thresholds median VV backscatter; default threshold is -17 dB unless parameters.sentinel1_water_threshold_db is supplied.",
+          "GeoJSON polygons are generated from the thresholded water mask and are intended for exposure screening, not final flood delineation.",
+          "Earth Engine thumbnail/map tile URLs are preview links rather than durable exported files. If a durable raster is needed, request export output or call the export skill."
+        ]
+      }
+    },
+    {
+      "skill_id": "create_earth_engine_export_task",
+      "name": "Create Earth Engine Export Task",
+      "description": "Creates an Earth Engine export task for supported image outputs and returns task id, state, and destination metadata in the GAS response.",
+      "constraints": {
+        "other": [
+          "Google Cloud Storage export is the preferred deployment path for durable raster delivery.",
+          "Drive export is available as a fallback.",
+          "The export skill polls Earth Engine until the task completes, fails, or reaches wait_timeout_seconds. Use GAS stream or async mode for long-running exports.",
+          "For GCS exports, the response includes the gs:// URI, HTTPS object URL, and a signed URL when the deployment can verify the object with Google Cloud Storage credentials."
+        ]
+      }
+    }
+  ],
+  "execute_task": {
+    "operation_id": "execute_task",
+    "name": "ExecuteTask",
+    "description": "Submits a natural-language Google Earth Engine task. The LLM creates a constrained workflow plan; the agent validates the plan and executes trusted Earth Engine Python API tools for NDVI summaries, daily NDVI time series, NDVI maps, optical composites, climate/environmental time series, land-cover area summaries, land-cover maps, surface-water/flood-water maps, or export task creation.",
+    "request_schema": "https://www.geospatial-agentic-services.online/schemas/execute_task_request.schema.json",
+    "response_schema": "https://www.geospatial-agentic-services.online/schemas/task_response.schema.json",
+    "modes": [
+      "sync",
+      "async",
+      "stream"
+    ],
+    "task": {
+      "instructions": {
+        "required": true,
+        "description": "Natural-language GEE task instructions such as 'Compute average NDVI for Centre County, Pennsylvania from Sentinel-2 during June 2024 and return a CSV summary.'"
+      }
+    },
+    "inputs": {
+      "input_datasets": {
+        "required": false,
+        "description": "Optional vector datasets used as Earth Engine analysis regions. The agent reads the first valid vector input, converts it to WGS84 when needed, and uses its geometry/bounds for all supported workflows by default. Region priority is: valid vector input dataset first; otherwise parameters.bbox; otherwise text place-name lookup/geocoding. Set parameters.use_input_region=false only when you intentionally want to ignore the supplied vector.",
+        "supported_item_types": [
+          "URL",
+          "server_path",
+          "encoded_file_object"
+        ]
+      }
+    },
+    "outputs": {
+      "artifact_delivery": {
+        "required": false,
+        "default": "URL",
+        "allowed_values": [
+          "URL",
+          "Encoded"
+        ],
+        "description": "How generated artifacts are delivered in the standard response: 'URL' (default) or 'Encoded'."
+      },
+      "primary_artifacts": [
+        {
+          "type": "report",
+          "formats": [
+            "JSON"
+          ],
+          "required": false,
+          "description": "Optional downloadable processing report. Structured GEE processing summary and validated plan metadata are available in the task response under provenance.details.gee_summary and provenance.details.validated_plan."
+        },
+        {
+          "type": "table",
+          "formats": [
+            "CSV"
+          ],
+          "required": false,
+          "description": "Summary tables for NDVI, climate/environmental time series, precipitation, land-cover class areas, or surface-water exposure summaries."
+        },
+        {
+          "type": "chart",
+          "formats": [
+            "HTML"
+          ],
+          "required": false,
+          "description": "Interactive HTML line charts for daily NDVI and climate/environmental variable time series."
+        },
+        {
+          "type": "map",
+          "formats": [
+            "HTML",
+            "GeoJSON"
+          ],
+          "required": false,
+          "description": "Earth Engine visualization URLs and interactive NDVI, optical composite, land-cover, and surface-water map artifacts. Surface-water workflows can also return exposure-ready GeoJSON water polygons."
+        },
+        {
+          "type": "raster",
+          "formats": [
+            "GeoTIFF"
+          ],
+          "required": false,
+          "description": "Raster image outputs such as cloud-filtered composites or NDVI images are produced through Earth Engine export tasks after the client decides a preview is useful. The initial GAS response returns export task metadata; the GeoTIFF is written to the configured Earth Engine export destination after task completion."
+        },
+        {
+          "type": "export_task",
+          "formats": [
+            "JSON"
+          ],
+          "required": false,
+          "description": "Earth Engine export task metadata for long-running raster/table exports, including task id, state, destination, required permissions, and errors when export creation is not allowed."
+        }
+      ]
+    },
+    "parameters": {
+      "model": {
+        "required": false,
+        "default": "gpt-5.2",
+        "description": "Optional model override used for LLM workflow planning. If omitted, the agent default model is used."
+      },
+      "bbox": {
+        "required": false,
+        "description": "Optional explicit bounding box [min_lon, min_lat, max_lon, max_lat]. Used when no valid vector input dataset is supplied; vector inputs override bbox, and bbox overrides text place-name lookup/geocoding."
+      },
+      "start_date": {
+        "required": false,
+        "description": "Optional fallback start date in YYYY-MM-DD format."
+      },
+      "end_date": {
+        "required": false,
+        "description": "Optional fallback end date in YYYY-MM-DD format."
+      },
+      "max_cloud_percent": {
+        "required": false,
+        "default": 20,
+        "description": "Maximum scene-level cloud percentage for Sentinel-2 or Landsat filtering."
+      },
+      "scale": {
+        "required": false,
+        "description": "Earth Engine reduction or export scale in meters. Defaults to the selected dataset resolution."
+      },
+      "water_occurrence_threshold": {
+        "required": false,
+        "default": 50,
+        "description": "For JRC Global Surface Water occurrence mapping, minimum occurrence percentage used to classify a pixel as mapped surface water."
+      },
+      "sentinel1_water_threshold_db": {
+        "required": false,
+        "default": -17,
+        "description": "For Sentinel-1 recent flood/surface-water mapping, VV backscatter threshold in dB; pixels below this value are mapped as water."
+      },
+      "variables": {
+        "required": false,
+        "description": "Optional climate/environmental variables for climate_time_series requests. Examples: precipitation, tmax, tmin, temperature, relative_humidity_max, relative_humidity_min, wind_speed, solar_radiation, pet, aet, soil_moisture, drought_index, vapor_pressure_deficit, snow_water_equivalent."
+      },
+      "earth_engine_project": {
+        "required": false,
+        "description": "Optional Earth Engine project override for deployments that allow it. Most clients should omit this and use the server-managed project."
+      },
+      "export_destination": {
+        "required": false,
+        "default": "server_default",
+        "allowed_values": [
+          "gcs",
+          "drive"
+        ],
+        "description": "Advanced optional override for raster export destination. When GEE_EXPORT_BUCKET is configured, the server defaults to Google Cloud Storage, so ordinary clients should omit this."
+      },
+      "gcs_bucket": {
+        "required": false,
+        "description": "Optional deployment-permitted Google Cloud Storage bucket override. Most clients should omit this and use the server-managed GEE_EXPORT_BUCKET."
+      },
+      "wait_timeout_seconds": {
+        "required": false,
+        "default": 900,
+        "description": "Advanced optional override. Maximum seconds the export skill waits for Earth Engine completion or GCS object availability before returning a timeout status. Ordinary clients should omit this and use the server default."
+      },
+      "poll_interval_seconds": {
+        "required": false,
+        "default": 15,
+        "description": "Advanced optional override. Seconds between Earth Engine/GCS export status checks. Ordinary clients should omit this and use the server default."
+      },
+      "signed_url_expiration_seconds": {
+        "required": false,
+        "default": 3600,
+        "description": "For completed GCS exports, requested lifetime of a generated signed HTTPS URL when the deployment has Google Cloud Storage signing credentials."
+      },
+      "requested_skill": {
+        "required": false,
+        "description": "Advanced optional skill-selection hint. Most clients should omit this."
+      },
+      "use_input_region": {
+        "required": false,
+        "default": true,
+        "description": "Advanced opt-out switch for vector inputs. When input_datasets contains a valid vector, the agent uses it as the analysis region by default. Set false only to ignore the vector geometry and use parameters.bbox or text place-name lookup/geocoding."
+      }
+    },
+    "credentials": {
+      "required": true,
+      "one_of": [
+        "OPENAI_API_KEY",
+        "GIBD_API_KEY"
+      ],
+      "description": "The client must provide OPENAI_API_KEY or GIBD_API_KEY for LLM planning. Google Earth Engine credentials are deployment-managed by the GAS server and are not supplied by ordinary clients."
+    }
+  },
+  "conformance": {
+    "gas_version": "1.0.0",
+    "schemas": {
+      "describe_agent": "https://www.geospatial-agentic-services.online/schemas/describe_agent.schema.json",
+      "task_response": "https://www.geospatial-agentic-services.online/schemas/task_response.schema.json",
+      "execute_task_request": "https://www.geospatial-agentic-services.online/schemas/execute_task_request.schema.json"
+    }
+  },
+  "provenance_and_reproducibility": {
+    "provenance": {
+      "supported": true,
+      "description": "Returns the raw LLM plan, validated constrained plan, GEE processing summary, Earth Engine dataset ids, region/date/scale parameters, tool-call trace, artifact paths, and LLM/tool call counts."
+    },
+    "reproducibility": {
+      "supported": true,
+      "description": "Provides dataset ids, date ranges, resolved region geometry/bounds, reducer scale, cloud-filter thresholds, validated plan JSON, geocoding provenance when used, and server-side execution metadata."
+    },
+    "validation": {
+      "supported": true,
+      "description": "Validates that the LLM plan uses only supported actions and datasets, resolves to a usable region from place name, input vector, or bbox, uses valid dates, and maps to trusted Earth Engine tool functions."
+    }
+  },
+  "governance": {
+    "access_control": {
+      "description": "The client supplies model credentials through the standard GAS credential fields. Earth Engine credentials are server-managed deployment secrets."
+    },
+    "operation_policy": {
+      "description": "The LLM is restricted to planning. The agent does not execute arbitrary LLM-generated Python or JavaScript code; it only executes validated, prebuilt Earth Engine Python API tools."
+    },
+    "review_policy": {
+      "description": "output_review_required is set to false for demo workflows. Scientific outputs should be reviewed for dataset suitability, scale, and uncertainty before decision use."
+    },
+        "policy_notes": "The GEE agent is a focused demonstration of GAS exposing Earth Engine as an agentic service, not a general-purpose Earth Engine code execution endpoint."
+  },
+  "extensions": {
+    "description": "The Google Earth Engine Agent supports LLM-planned, tool-validated NDVI summaries, daily NDVI time series, NDVI maps, cloud-filtered median composites, climate/environmental time series, land-cover class area summaries, land-cover maps, surface-water/flood-water maps, and Earth Engine export task creation.",
+    "data_sources": [
+      {
+        "source_id": "sentinel2_sr",
+        "name": "Sentinel-2 Surface Reflectance Harmonized",
+        "endpoint": "COPERNICUS/S2_SR_HARMONIZED",
+        "credential_required": false
+      },
+      {
+        "source_id": "landsat8_sr",
+        "name": "Landsat 8 Collection 2 Level 2",
+        "endpoint": "LANDSAT/LC08/C02/T1_L2",
+        "credential_required": false
+      },
+      {
+        "source_id": "landsat9_sr",
+        "name": "Landsat 9 Collection 2 Level 2",
+        "endpoint": "LANDSAT/LC09/C02/T1_L2",
+        "credential_required": false
+      },
+      {
+        "source_id": "chirps_daily",
+        "name": "CHIRPS Daily Precipitation",
+        "endpoint": "UCSB-CHG/CHIRPS/DAILY",
+        "credential_required": false
+      },
+      {
+        "source_id": "gridmet_daily",
+        "name": "GRIDMET Daily Surface Meteorology",
+        "endpoint": "IDAHO_EPSCOR/GRIDMET",
+        "credential_required": false
+      },
+      {
+        "source_id": "daymet_daily",
+        "name": "Daymet V4 Daily Surface Weather",
+        "endpoint": "NASA/ORNL/DAYMET_V4",
+        "credential_required": false
+      },
+      {
+        "source_id": "era5_land_daily",
+        "name": "ERA5-Land Daily Aggregated",
+        "endpoint": "ECMWF/ERA5_LAND/DAILY_AGGR",
+        "credential_required": false
+      },
+      {
+        "source_id": "terraclimate_monthly",
+        "name": "TerraClimate Monthly Climate and Water Balance",
+        "endpoint": "IDAHO_EPSCOR/TERRACLIMATE",
+        "credential_required": false
+      },
+      {
+        "source_id": "esa_worldcover",
+        "name": "ESA WorldCover",
+        "endpoint": "ESA/WorldCover/v200",
+        "credential_required": false
+      },
+      {
+        "source_id": "dynamic_world",
+        "name": "Dynamic World",
+        "endpoint": "GOOGLE/DYNAMICWORLD/V1",
+        "credential_required": false
+      },
+      {
+        "source_id": "jrc_global_surface_water",
+        "name": "JRC Global Surface Water",
+        "endpoint": "JRC/GSW1_4/GlobalSurfaceWater",
+        "credential_required": false
+      },
+      {
+        "source_id": "sentinel1_grd",
+        "name": "Sentinel-1 Ground Range Detected",
+        "endpoint": "COPERNICUS/S1_GRD",
+        "credential_required": false
+      }
+    ],
+    "deployment_credentials": {
+      "description": "Earth Engine authentication is configured on the GAS server, not supplied by ordinary clients.",
+      "environment_variables": [
+        "GEE_SERVICE_ACCOUNT_KEY",
+        "GEE_PROJECT",
+        "GEE_EXPORT_BUCKET",
+        "GEE_EXPORT_PREFIX",
+        "GEE_GEOCODER_URL",
+        "GEE_GEOCODER_USER_AGENT"
+      ],
+      "required_project_roles": [
+        "roles/earthengine.resourceViewer",
+        "roles/serviceusage.serviceUsageConsumer",
+        "roles/earthengine.writer for thumbnail and export task creation"
+      ],
+      "gcs_bucket_roles": [
+        "roles/storage.objectCreator for Earth Engine export writes",
+        "roles/storage.objectViewer for server-side signed URL generation after export completion"
+      ]
+    },
+    "agentic_tooling": {
+      "description": "The LLM produces a constrained JSON plan. The agent resolves place names, validates the plan, and executes trusted Earth Engine Python API tools.",
+      "tools": [
+        "geocode_place",
+        "initialize_earth_engine",
+        "build_optical_collection",
+        "create_median_composite",
+        "reduce_region_ndvi",
+        "create_ndvi_time_series",
+        "write_ndvi_folium_map",
+        "create_climate_time_series",
+        "summarize_land_cover_area",
+        "create_land_cover_map",
+        "map_jrc_surface_water_occurrence",
+        "detect_sentinel1_water",
+        "create_surface_water_map",
+        "write_surface_water_folium_map",
+        "create_thumbnail_url",
+        "start_earth_engine_export"
+      ]
+    }
+  }
+}

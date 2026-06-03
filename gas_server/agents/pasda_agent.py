@@ -8,7 +8,6 @@ import platform
 from typing import Optional, Dict, Any, List
 import requests
 import geopandas as gpd
-from openai import OpenAI
 from dotenv import load_dotenv
 from gas_server.core.file_naming import build_output_path
 from gas_server.core.geo_agent import GeoAgent
@@ -23,6 +22,13 @@ load_dotenv()
 ensure_runtime_dirs()
 
 BASE_DIR = str(PROJECT_ROOT)
+
+KNOWN_PASDA_SERVICES = {
+    "dephealth": "pasda/DepHealth",
+    "pasda/dephealth": "pasda/DepHealth",
+    "penndot": "pasda/PennDOT",
+    "pasda/penndot": "pasda/PennDOT",
+}
 
 class PasdaAgent(GeoAgent):
     agent_id = "pasda_agent"
@@ -204,7 +210,7 @@ class PasdaAgent(GeoAgent):
         return {
             "agent_name": self.agent_name,
             "agent_version": self.agent_version,
-            "model": "gpt-4o",
+            "model": self.model,
             "duration": None,
             "inputs": {
                 "text": user_text,
@@ -283,7 +289,7 @@ class PasdaAgent(GeoAgent):
         return {
             "agent_name": self.agent_name,
             "agent_version": self.agent_version,
-            "model": "gpt-4o",
+            "model": self.model,
             "duration": f"{duration_seconds:.2f} seconds",
             "total_input_tokens": self.total_input_tokens,
             "total_output_tokens": self.total_output_tokens,
@@ -347,6 +353,7 @@ class PasdaAgent(GeoAgent):
             })
 
     def get_service_metadata(self, service_name: str) -> str:
+        service_name = self._normalize_service_name(service_name)
         cache_key = self._tool_cache_key("get_service_metadata", {"service_name": service_name})
         if cache_key in self._tool_result_cache:
             return self._cached_tool_result(cache_key)
@@ -382,6 +389,7 @@ class PasdaAgent(GeoAgent):
             })
 
     def inspect_layer_fields(self, service_name: str, layer_id: int) -> str:
+        service_name = self._normalize_service_name(service_name)
         cache_key = self._tool_cache_key("inspect_layer_fields", {"service_name": service_name, "layer_id": layer_id})
         if cache_key in self._tool_result_cache:
             return self._cached_tool_result(cache_key)
@@ -425,6 +433,7 @@ class PasdaAgent(GeoAgent):
             })
 
     def sample_layer_data(self, service_name: str, layer_id: int, where_clause: str) -> str:
+        service_name = self._normalize_service_name(service_name)
         cache_key = self._tool_cache_key(
             "sample_layer_data",
             {"service_name": service_name, "layer_id": layer_id, "where_clause": where_clause or "1=1"},
@@ -506,7 +515,10 @@ class PasdaAgent(GeoAgent):
         return value
 
     def _tool_cache_key(self, tool_name: str, arguments: Dict[str, Any]) -> str:
-        normalized = self._normalize_tool_value(arguments)
+        normalized_arguments = dict(arguments or {})
+        if "service_name" in normalized_arguments:
+            normalized_arguments["service_name"] = self._normalize_service_name(normalized_arguments["service_name"])
+        normalized = self._normalize_tool_value(normalized_arguments)
         return f"{tool_name}:{json.dumps(normalized, sort_keys=True, default=str)}"
 
     def _cached_tool_result(self, cache_key: str) -> str:
@@ -529,14 +541,60 @@ class PasdaAgent(GeoAgent):
         cache_key = self._tool_cache_key(tool_name, arguments)
         return self._tool_call_counts.get(cache_key, 0)
 
+    def _normalize_service_name(self, service_name: str) -> str:
+        normalized = re.sub(r"\s+", "", str(service_name or "").strip())
+        normalized = re.sub(r"/MapServer/?$", "", normalized, flags=re.IGNORECASE)
+        normalized = re.sub(r"^https?://mapservices\.pasda\.psu\.edu/server/rest/services/", "", normalized, flags=re.IGNORECASE)
+        return KNOWN_PASDA_SERVICES.get(normalized.lower(), normalized)
+
     def _get_raw_metadata(self, service_name: str, layer_id: int) -> dict:
         try:
+            service_name = self._normalize_service_name(service_name)
             url = f"https://mapservices.pasda.psu.edu/server/rest/services/{service_name}/MapServer/{layer_id}?f=pjson"
             r = requests.get(url, timeout=25)
             r.raise_for_status()
             return r.json()
         except Exception:
             return {}
+
+    def _epsg_from_spatial_reference(self, spatial_reference: Any) -> Optional[str]:
+        if not isinstance(spatial_reference, dict):
+            return None
+        wkid = spatial_reference.get("latestWkid") or spatial_reference.get("wkid")
+        try:
+            return f"EPSG:{int(wkid)}"
+        except (TypeError, ValueError):
+            return None
+
+    def _details_from_arcgis_metadata(self, metadata: dict) -> dict:
+        if not isinstance(metadata, dict):
+            metadata = {}
+
+        spatial_reference = (
+            metadata.get("sourceSpatialReference")
+            or metadata.get("spatialReference")
+            or (metadata.get("extent") or {}).get("spatialReference")
+        )
+        crs = self._epsg_from_spatial_reference(spatial_reference) or "EPSG:4326"
+
+        name = metadata.get("name") or metadata.get("displayField") or "PASDA layer"
+        geometry_type = metadata.get("geometryType") or "Unknown"
+        description = (
+            metadata.get("description")
+            or metadata.get("serviceItemId")
+            or f"Downloaded {name} from PASDA."
+        )
+        description = re.sub(r"<[^>]+>", " ", str(description))
+        description = re.sub(r"\s+", " ", description).strip()
+        if not description or len(description) < 10:
+            description = f"Downloaded {name} from PASDA."
+
+        return {
+            "crs": crs,
+            "geometry_type": geometry_type,
+            "year": "Unknown",
+            "description": description,
+        }
 
     def _determine_crs_and_details_with_llm(self, metadata: dict) -> dict:
         metadata_str = json.dumps(metadata)[:4000]
@@ -577,6 +635,7 @@ class PasdaAgent(GeoAgent):
             return {"crs": "EPSG:4326", "geometry_type": "Unknown", "year": "Unknown", "description": "Data downloaded from PASDA."}
 
     def download_data(self, service_name: str, layer_id: int, user_query: str) -> str:
+        service_name = self._normalize_service_name(service_name)
         cache_key = self._tool_cache_key("download_data", {"service_name": service_name, "layer_id": layer_id})
         if cache_key in self._tool_result_cache:
             return self._cached_tool_result(cache_key)
@@ -628,22 +687,18 @@ class PasdaAgent(GeoAgent):
             
             # Metadata analysis
             raw_meta = self._get_raw_metadata(service_name, layer_id)
-            details = self._determine_crs_and_details_with_llm(raw_meta)
+            details = self._details_from_arcgis_metadata(raw_meta)
             
             self.summary = details.get("description")
             self.execution_outputs["text"] = self.summary
 
             gdf = gpd.GeoDataFrame.from_features(all_features)
             
-            # Assign CRS from LLM analysis
-            llm_crs = details.get("crs")
-            if llm_crs:
-                try:
-                    gdf = gdf.set_crs(llm_crs, allow_override=True)
-                except Exception:
-                    gdf = gdf.set_crs("EPSG:4326", allow_override=True)
-            else:
-                gdf = gdf.set_crs("EPSG:4326", allow_override=True)
+            # ArcGIS REST GeoJSON responses are longitude/latitude coordinates.
+            # Service metadata may advertise the native service CRS, which would
+            # mislabel the downloaded coordinates and break downstream joins.
+            output_crs = "EPSG:4326"
+            gdf = gdf.set_crs(output_crs, allow_override=True)
 
             driver = "GeoJSON" if final_path.lower().endswith(".geojson") else "GPKG"
             artifact_type = "GeoJSON" if driver == "GeoJSON" else "GeoPackage"
@@ -656,7 +711,7 @@ class PasdaAgent(GeoAgent):
                 "type": artifact_type,
                 "path": final_path,
                 "feature_count": len(all_features),
-                "crs": llm_crs,
+                "crs": output_crs,
                 "source_service": service_name,
                 "source_layer_id": layer_id
             })
@@ -675,7 +730,7 @@ class PasdaAgent(GeoAgent):
                 "status": "success",
                 "file_path": final_path,
                 "feature_count": len(all_features),
-                "crs_used": llm_crs
+                "crs_used": output_crs
             })
             self._tool_result_cache[cache_key] = result
             self._tool_call_counts[cache_key] = 1
@@ -689,7 +744,8 @@ class PasdaAgent(GeoAgent):
 
     def _direct_pasda_candidate(self, user_query: str) -> Optional[Dict[str, Any]]:
         query = (user_query or "").lower()
-        boundary_words = ("boundary", "boundaries", "polygon", "polygons")
+        has_county_term = bool(re.search(r"\b(county|counties)\b", query))
+        boundary_words = ("boundary", "boundaries", "polygon", "polygons", "layer", "dataset")
 
         if any(term in query for term in ("hospital", "hospitals", "medical center", "healthcare facility")):
             return {
@@ -699,12 +755,48 @@ class PasdaAgent(GeoAgent):
                 "reason": "Matched a common statewide PASDA Department of Health hospital layer.",
             }
 
-        if "county" in query and any(word in query for word in boundary_words):
+        if re.search(r"\b(school district|school districts)\b", query):
             return {
-                "service_name": "PennDOT",
+                "service_name": "pasda/PennDOT",
+                "layer_id": 11,
+                "label": "Pennsylvania school district boundaries",
+                "reason": "Matched a common statewide PASDA PennDOT school district boundary layer.",
+            }
+
+        if re.search(r"\b(municipality|municipalities|municipal)\b", query):
+            return {
+                "service_name": "pasda/PennDOT",
+                "layer_id": 10,
+                "label": "Pennsylvania municipal boundaries",
+                "reason": "Matched a common statewide PASDA PennDOT municipal boundary layer.",
+            }
+
+        if has_county_term and (
+            any(word in query for word in boundary_words)
+            or "pennsylvania" in query
+            or re.search(r"\bpa\b", query)
+        ):
+            return {
+                "service_name": "pasda/PennDOT",
                 "layer_id": 7,
                 "label": "Pennsylvania county boundaries",
                 "reason": "Matched a common statewide PASDA boundary layer in the PennDOT service.",
+            }
+
+        if re.search(r"\b(state|commonwealth)\b", query) and any(word in query for word in boundary_words):
+            return {
+                "service_name": "pasda/PennDOT",
+                "layer_id": 13,
+                "label": "Pennsylvania state boundary",
+                "reason": "Matched a common statewide PASDA PennDOT state boundary layer.",
+            }
+
+        if re.search(r"\b(road|roads|highway|highways)\b", query):
+            return {
+                "service_name": "pasda/PennDOT",
+                "layer_id": 4,
+                "label": "Pennsylvania state roads",
+                "reason": "Matched a common statewide PASDA PennDOT state roads layer.",
             }
 
         return None

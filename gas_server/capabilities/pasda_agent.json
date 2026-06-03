@@ -3,7 +3,7 @@
   "profile": {
     "agent_id": "pasda_agent",
     "name": "PASDA Discovery Agent",
-    "description": "This agent serves as an expert gateway to the Pennsylvania Spatial Data Access (PASDA) repository. It translates broad user requests into precise PASDA queries, using technical handbooks for PASDA metadata and direct download pages. It uses a two-step process: first identifying and describing the relevant datasets, then retrieving and packaging the actual data into GeoPackage by default or GeoJSON when explicitly requested.",
+    "description": "This agent serves as an expert gateway to the Pennsylvania Spatial Data Access (PASDA) repository. It translates broad user requests into precise PASDA ArcGIS REST service/layer selections, using high-confidence deterministic shortcuts for common statewide layers and model-assisted discovery when no shortcut applies. It retrieves and packages the selected data into GeoPackage by default or GeoJSON when explicitly requested.",
     "version": "1.0.0",
     "base_url": "https://www.geospatial-agentic-services.online/agents/pasda_agent",
     "last_updated": "2026-04-28",
@@ -31,13 +31,13 @@
     {
       "skill_id": "pasda_data_retrieval",
       "name": "PASDA Data Retrieval",
-      "description": "Translates a broad user query about Pennsylvania geospatial data into a structured PASDA search. It consults the PASDA metadata and download handbooks to identify relevant datasets, retrieves their metadata, and then generates code to download the actual data using direct download links or FTP.",
+      "description": "Translates a broad user query about Pennsylvania geospatial data into a structured PASDA search. It uses direct ArcGIS REST tools and high-confidence shortcuts for common statewide PASDA layers, retrieves metadata, and downloads the selected dataset as a managed artifact.",
       "constraints": {
         "spatial": "Geographic scope is strictly limited to the Commonwealth of Pennsylvania.",
         "temporal": null,
         "other": [
-          "Requires a two-step workflow: Metadata Query (identify and describe) followed by Data Retrieval (download and package).",
-          "Code execution will retry debugging up to 10 times upon failure.",
+          "Uses a two-step workflow when no high-confidence shortcut applies: Metadata Query (identify and describe) followed by Data Retrieval (download and package).",
+          "Common statewide requests such as hospitals, counties, municipalities, school districts, state boundary, and state roads use direct PASDA service/layer shortcuts when possible.",
           "Final vector output is saved as GeoPackage (.gpkg) by default unless GeoJSON is explicitly requested.",
           "Source data may be in Shapefile, GDB, or GeoTIFF formats which are converted during packaging."
         ]
@@ -130,11 +130,11 @@
     },
     "reproducibility": {
       "supported": true,
-      "description": "Returns the exact Python script used for download and packaging execution in the execution.code.script field, along with environment details and selected data source."
+      "description": "Returns selected data source metadata, environment details, and output artifact references. The agent uses server-side ArcGIS REST tools and deterministic metadata parsing rather than generated Python code for PASDA downloads."
     },
     "validation": {
-      "supported": false,
-      "description": "Agent checks code execution success but does not validate the spatial accuracy or completeness of PASDA data."
+      "supported": true,
+      "description": "Agent validates request routing for known statewide shortcuts, checks download success, records feature counts, and normalizes ArcGIS REST GeoJSON coordinates to EPSG:4326. It does not validate the authoritative spatial accuracy or completeness of PASDA source data."
     }
   },
   "governance": {
@@ -150,6 +150,6 @@
     "policy_notes": "If the agent is used, please cite the relevant research on geospatial AI agents."
   },
   "extensions": {
-    "description": "This agent is specifically tailored for the Pennsylvania Spatial Data Access (PASDA) repository. It uses PASDA technical handbooks for metadata and direct download page URLs. Source data may be in Shapefile, GDB, or GeoTIFF formats and is converted to GeoPackage by default or GeoJSON during packaging. Supports FTP and direct HTTP download."
+    "description": "This agent is specifically tailored for the Pennsylvania Spatial Data Access (PASDA) repository. It uses PASDA ArcGIS REST service metadata, cached tool calls, and direct download helpers. Source data is converted to GeoPackage by default or GeoJSON when explicitly requested."
   }
 }

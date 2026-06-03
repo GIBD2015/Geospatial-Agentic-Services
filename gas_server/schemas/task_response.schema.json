@@ -72,6 +72,18 @@
             "required": ["name", "type", "format", "mime_type", "size_bytes"],
             "properties": {
               "name": {"type": "string"},
+              "role": {
+                "type": ["string", "null"],
+                "description": "Stable artifact role. Simple single-output tasks may use generic roles such as 'output' or 'dataset'; multi-artifact tasks should use semantic roles such as 'ndvi_map_html_file'."
+              },
+              "label": {
+                "type": ["string", "null"],
+                "description": "Human-readable artifact label for display."
+              },
+              "original_filename": {
+                "type": ["string", "null"],
+                "description": "Original filename before GAS artifact relocation or normalization, when available."
+              },
               "type": {"type": ["string", "null"]},
               "format": {"type": ["string", "null"]},
               "mime_type": {"type": ["string", "null"]},
@@ -152,7 +164,11 @@
         "tool_calls": {"type": ["number", "null"]},
         "artifacts_created": {"type": ["number", "null"]},
         "token_usage": {"type": "object"},
-        "lineage": {"type": "array"}
+        "lineage": {"type": "array"},
+        "details": {
+          "type": "object",
+          "description": "Optional agent-specific provenance details such as validated plans, raw model plans, processing summaries, source query metadata, or tool traces. This section is metadata for auditability and reproducibility; delivered output files belong in outputs.artifacts."
+        }
       },
       "additionalProperties": true
     },
@@ -179,8 +195,20 @@
         },
         "output_artifacts": {
           "type": "array",
-          "description": "Lightweight provenance references to output artifacts produced by the task. Actual artifact delivery, including URLs or encoded data, belongs in outputs.artifacts.",
-          "items": {"type": "object"}
+          "description": "Lightweight provenance references to output artifacts produced by the task. Actual artifact delivery, including URLs or encoded data, belongs in outputs.artifacts. Roles follow the same convention as outputs.artifacts: generic roles for simple outputs and semantic roles for multi-artifact workflows.",
+          "items": {
+            "type": "object",
+            "properties": {
+              "role": {"type": ["string", "null"]},
+              "label": {"type": ["string", "null"]},
+              "name": {"type": ["string", "null"]},
+              "original_filename": {"type": ["string", "null"]},
+              "url": {"type": ["string", "null"]},
+              "format": {"type": ["string", "null"]},
+              "type": {"type": ["string", "null"]}
+            },
+            "additionalProperties": true
+          }
         },
         "parameters": {"type": "object"},
         "stochasticity": {
