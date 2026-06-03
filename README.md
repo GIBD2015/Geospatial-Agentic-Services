@@ -178,9 +178,7 @@ Use `.env.example` as a safe template for local environment variables. Do not
 commit real API keys, downloaded datasets, generated outputs, build artifacts,
 or notebook execution outputs.
 
-We thank the coauthors of the GAS paper and welcome contributions from the
-broader geospatial community to advance GAS-compatible agent services,
-software, documentation, validation methods, and interoperability models.
+We welcome contributions from the broader geospatial community to advance the GAS framework, GAS implementations, documentation, and use cases from various domains.
 
 [Geoinformation and Big Data Research Laboratory
 (GIBD)](https://giscience.psu.edu/), Department of Geography, Penn State.
