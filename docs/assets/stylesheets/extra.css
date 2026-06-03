@@ -16,6 +16,15 @@
   font-weight: 400;
 }
 
+.md-grid {
+  max-width: 100%;
+}
+
+.md-main__inner {
+  margin-left: 1rem;
+  margin-right: 1rem;
+}
+
 .md-sidebar .md-nav__item--section > .md-nav__link {
   font-size: 0.78rem;
   font-weight: 700;
