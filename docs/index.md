@@ -18,7 +18,7 @@ agentic systems should be built. Instead, it focuses on the shared service
 contracts needed when different geospatial agents, applications, notebooks, and
 AI orchestrators need to work together.
 
-This repository provides a reference implementations for GAS server, interface schemas, GAS client SDK, GAS registry, developer documentations, and some example agents and notebooks. The public
+This repository provides reference implementations for GAS server, interface schemas, GAS client SDK, GAS registry, developer documentations, and some example agents and notebooks. The public
 [GAS Registry](http://geospatial-agentic-services.online/registry) catalogs
 registers GAS services by reading their `GetCapabilities` and `DescribeAgent`
 documents.
