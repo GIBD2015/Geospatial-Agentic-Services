@@ -1,0 +1,8 @@
+{
+  "name": "GAS Canvas",
+  "description": "A drag-and-drop visual pipeline builder for geospatial frameworks powered by the Geospatial Agentic Services (GAS) SDK.",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE"
+  ]
+}
