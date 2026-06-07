@@ -222,7 +222,7 @@ def inspect_df(name, df, sample_count=1):
     if isinstance(df, gpd.GeoDataFrame):
         info["crs"] = str(df.crs)
         info["geometry_type"] = df.geometry.geom_type.unique().tolist() if not df.empty else []
-    
+
     samples = {}
     if not df.empty:
         s_df = df.head(sample_count)
@@ -1451,10 +1451,20 @@ def list_registry():
             for item_index, obj in enumerate(items, start=1):
                 is_geo = isinstance(obj, gpd.GeoDataFrame)
                 ext, driver, _ = self._preferred_vector_output(task) if is_geo else (".csv", None, "CSV")
-                suffix = f"_{key_index}"
-                if len(items) > 1:
-                    suffix += f"_{item_index}"
-                fname = f"{base_name}{suffix}{ext}"
+
+                # Format prefix and clean the key name to be safe
+                prefix = self.agent_id.replace(" ", "")
+                clean_key = re.sub(r'[^a-zA-Z0-9-]', '-', key.replace('_', '-')).lower()
+                clean_key = re.sub(r'-+', '-', clean_key).strip('-')
+
+                # Add index suffix if multiple items exist for same key
+                item_suffix = f"-{item_index}" if len(items) > 1 else ""
+
+                # Generate random suffix
+                letters = "abcdefghijklmnopqrstuvwxyz"
+                random_suffix = f"{random.randint(0, 9999):04d}-{''.join(random.choice(letters) for _ in range(4))}-{random.randint(0, 9999):04d}"
+
+                fname = f"{prefix}-{clean_key}{item_suffix}-{random_suffix}{ext}"
                 path = os.path.join(out_dir, fname)
 
                 if self.debug:
@@ -1532,7 +1542,7 @@ def list_registry():
         self._emit_progress(
             progress_callback,
             stage="start",
-            message=f"I will load the requested vector/tabular inputs, run code-driven analysis, and save a final dataset artifact from {len(dataset_path)} dataset reference(s).",
+            message=f"[UPDATED_CODE_ACTIVE] I will load the requested vector/tabular inputs, run code-driven analysis, and save a final dataset artifact from {len(dataset_path)} dataset reference(s).",
             data={"dataset_count": len(dataset_path), "max_iterations": 40},
         )
 
@@ -1698,17 +1708,20 @@ def list_registry():
                         requested_keys = [args["variable_name"]]
                     missing_keys = [name for name in requested_keys if name not in self.registry]
                     if requested_keys and not missing_keys:
-                        self.final_artifact_keys = requested_keys
-                        self.final_artifact_key = requested_keys[0]
+                        for k in requested_keys:
+                            if k not in self.final_artifact_keys:
+                                self.final_artifact_keys.append(k)
+                        if not self.final_artifact_key and self.final_artifact_keys:
+                            self.final_artifact_key = self.final_artifact_keys[0]
                         self._emit_progress(
                             progress_callback,
                             stage="artifact_generation",
-                            message=f"I found {len(requested_keys)} registered final artifact variable(s) and will save them at the end.",
-                            data={"variable_names": requested_keys},
+                            message=f"I found {len(requested_keys)} registered final artifact variable(s) and will save them at the end. Total registered: {len(self.final_artifact_keys)}",
+                            data={"variable_names": self.final_artifact_keys},
                         )
                         if self.debug:
-                            logging.info("Final artifacts registered: %s", requested_keys)
-                        result_content = f"Artifacts {requested_keys} registered successfully. They will be saved at the end."
+                            logging.info("Final artifacts registered: %s. Total keys: %s", requested_keys, self.final_artifact_keys)
+                        result_content = f"Artifacts {requested_keys} registered successfully. They will be saved at the end. Total registered keys: {self.final_artifact_keys}"
                     else:
                         self._emit_progress(
                             progress_callback,
@@ -1736,7 +1749,7 @@ def list_registry():
             message="I am saving the registered analysis result and collecting its output metadata.",
         )
         output_dataset_paths, output_dataset_size, saved_artifacts = self._save_result(user_query)
-        output_dataset_path = output_dataset_paths[0] if output_dataset_paths else None
+        output_dataset_path = output_dataset_paths[0] if len(output_dataset_paths) == 1 else None
         duration_sec = time.time() - start_time
 
         if self.debug:
