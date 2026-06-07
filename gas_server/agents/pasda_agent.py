@@ -28,13 +28,15 @@ KNOWN_PASDA_SERVICES = {
     "pasda/dephealth": "pasda/DepHealth",
     "penndot": "pasda/PennDOT",
     "pasda/penndot": "pasda/PennDOT",
+    "uscensus2010_2020": "pasda/USCensus2010_2020",
+    "pasda/uscensus2010_2020": "pasda/USCensus2010_2020"
 }
 
 class PasdaAgent(GeoAgent):
     agent_id = "pasda_agent"
     agent_name = "PASDA Discovery Agent"
-    agent_version = "1.0.0"
-    agent_description = "Discovers PASDA layers and downloads selected GIS data."
+    agent_version = "1.1.0"
+    agent_description = "Discovers PASDA layers and downloads selected GIS data using LLM reasoning."
 
     def __init__(
         self,
@@ -58,7 +60,6 @@ class PasdaAgent(GeoAgent):
         self.total_input_tokens = 0
         self.total_output_tokens = 0
 
-        # New collectors for "complementary" field
         self.execution_inputs = {}
         self.execution_outputs = {}
         self.lineage_entries = []
@@ -67,26 +68,39 @@ class PasdaAgent(GeoAgent):
         self.inline_artifacts = []
         self.persisted_artifacts = []
 
+        # Knowledge base shifted directly into the system prompt.
+        # This keeps discovery lightning fast while leaving the multi-download orchestration to the AI.
         self.system_prompt = {
             "role": "system",
             "content": (
                 "You are an autonomous spatial data engineer working with PASDA "
                 "(Pennsylvania Spatial Data Access).\n"
                 "Your job is to find and download GIS datasets using the ArcGIS REST API.\n\n"
-                "CRITICAL RULES FOR SEARCHING:\n"
-                "1. PASDA organizes data by county or agency, for example 'Berks', 'Allegheny', or 'PennDOT'. "
-                "Service names rarely contain specific data themes like 'land use' or 'parcels'.\n"
-                "2. Use list_services with broad geographic or agency keywords only. "
-                "Never use specific data themes as the list_services keyword.\n"
-                "3. Use get_service_metadata on the broad services you found to inspect specific layers.\n"
-                "4. Use inspect_layer_fields to check layer columns and geometry type.\n"
-                "5. Use sample_layer_data to view actual attribute values. This is required before downloading.\n"
-                "6. Compare multiple layers if needed. Search again if a layer is wrong.\n"
-                "7. When confident, use download_data to get the layer.\n"
-                "8. Always use summarize_findings before finishing.\n"
-                "9. Do not inspect the same service or layer repeatedly. If a service/layer has already been inspected, move to sampling, downloading, or a different candidate.\n"
-                "10. For obvious statewide requests such as hospitals, schools, roads, boundaries, or health facilities, prefer the most direct high-confidence PASDA source and avoid a long exploratory search.\n"
-                "11. Keep your reasoning short and practical.\n"
+
+                "HIGH-CONFIDENCE QUICK-LINKS:\n"
+                "When the user requests any of the following common assets, bypass general exploratory searching "
+                "and use these exact service names and layer IDs directly with your tools:\n"
+                "- Hospitals / Healthcare: service_name='pasda/DepHealth', layer_id=6\n"
+                "- County Boundaries: service_name='pasda/USCensus2010_2020', layer_id=2\n"
+                "- School Districts: service_name='pasda/PennDOT', layer_id=11\n"
+                "- Municipal Boundaries: service_name='pasda/PennDOT', layer_id=10\n"
+                "- State Boundary: service_name='pasda/PennDOT', layer_id=13\n"
+                "- Roads / Highways: service_name='pasda/PennDOT', layer_id=4\n\n"
+
+                "CRITICAL RULES FOR MULTIPLE DATASETS:\n"
+                "1. If the user requests MULTIPLE layers or datasets in their prompt, you must execute distinct "
+                "download_data calls sequentially for EACH layer requested before summarizing your findings.\n"
+                "2. When choosing an output_filename for downloads, name them specifically to match the unique layer "
+                "(e.g., 'pa_hospitals' and 'pa_counties' instead of generic fallback names).\n\n"
+
+                "GENERAL SEARCH RULES (For items not listed above):\n"
+                "1. PASDA organizes data by county or agency. Service names rarely contain terms like 'land use'.\n"
+                "2. Use list_services with broad geographic or agency keywords only.\n"
+                "3. Use get_service_metadata to inspect specific layers inside a broad service.\n"
+                "4. Use inspect_layer_fields to check columns and geometry types.\n"
+                "5. Use sample_layer_data to view actual attribute values before downloading.\n"
+                "6. Always use summarize_findings only AFTER all requested datasets have been downloaded.\n"
+                "7. Keep your reasoning short and practical.\n"
             ),
         }
 
@@ -170,7 +184,7 @@ class PasdaAgent(GeoAgent):
                 "type": "function",
                 "function": {
                     "name": "summarize_findings",
-                    "description": "Save a short final summary of the findings and downloaded dataset.",
+                    "description": "Save a short final summary of the findings and downloaded datasets.",
                     "parameters": {
                         "type": "object",
                         "properties": {
@@ -183,27 +197,33 @@ class PasdaAgent(GeoAgent):
         ]
 
     def infer_required_roles(self, query: str) -> set:
-        roles = set()
-        return roles
+        return set()
 
-    def _generate_output_path(self, user_query: str) -> str:
+    def _generate_output_path(self, user_query: str, template_filename: Optional[str] = None) -> str:
         request = (user_query or "").lower()
         extension = ".geojson" if "geojson" in request and not any(term in request for term in ("geopackage", "gpkg", ".gpkg")) else ".gpkg"
-        return build_output_path(
-            getattr(self, "output_dir", str(DATA_DIR / self.agent_id)),
-            user_query,
-            extension=extension,
-            fallback="pasda",
-        )
+
+        fallback_name = template_filename if template_filename else "pasda"
+        # Sanitize fallback name to only contain alphanumeric characters and hyphens
+        stem = re.sub(r"[^a-zA-Z0-9-]", "-", fallback_name.replace("_", "-")).lower()
+        stem = re.sub(r"-+", "-", stem).strip("-")
+
+        # Generate a random suffix in the format 0336-nrri-5122
+        letters = "abcdefghijklmnopqrstuvwxyz"
+        random_suffix = f"{random.randint(0, 9999):04d}-{''.join(random.choice(letters) for _ in range(4))}-{random.randint(0, 9999):04d}"
+
+        # Build the filename manually starting with the exact agent_id- pattern (with hyphen)
+        # to satisfy the server's relocation check and prevent double relocation.
+        filename = f"{self.agent_id}-{stem}-{random_suffix}{extension}"
+
+        directory = getattr(self, "output_dir", str(DATA_DIR / self.agent_id))
+        os.makedirs(directory, exist_ok=True)
+        return os.path.join(directory, filename)
 
     def _environment_info(self) -> Dict[str, Any]:
         return {
             "python_version": platform.python_version(),
-            "domain-specific libraries": [
-                "requests",
-                "geopandas",
-                "openai"
-            ]
+            "domain-specific libraries": ["requests", "geopandas", "openai"]
         }
 
     def _empty_result(self, user_text: str, input_dataset_path: Optional[str] = None) -> Dict[str, Any]:
@@ -233,19 +253,9 @@ class PasdaAgent(GeoAgent):
             },
             "environment": self._environment_info(),
             "complementary": {
-                "Execution": {
-                    "Inputs": {},
-                    "Outputs": {}
-                },
-                "Provenance": {
-                    "Lineage": {},
-                    "Tool Calls": {},
-                    "LLM Calls": {}
-                },
-                "Artifacts and Logs": {
-                    "Inline Artifacts": {},
-                    "Persisted Artifacts": {}
-                }
+                "Execution": {"Inputs": {}, "Outputs": {}},
+                "Provenance": {"Lineage": {}, "Tool Calls": {}, "LLM Calls": {}},
+                "Artifacts and Logs": {"Inline Artifacts": {}, "Persisted Artifacts": {}}
             }
         }
 
@@ -269,7 +279,6 @@ class PasdaAgent(GeoAgent):
                 size_type = "raster"
                 dimensions = self.raster_dimensions.get(dataset_path)
 
-        # Build the complementary dictionary
         complementary = {
             "Execution": {
                 "Inputs": self.execution_inputs,
@@ -331,7 +340,6 @@ class PasdaAgent(GeoAgent):
             keyword_lower = keyword.lower().strip()
             filtered = [s for s in services if keyword_lower in s.lower()]
 
-            # Record lineage
             self.lineage_entries.append({
                 "step": "list_services",
                 "keyword": keyword,
@@ -339,18 +347,12 @@ class PasdaAgent(GeoAgent):
                 "result_count": len(filtered)
             })
 
-            result = json.dumps({
-                "services": filtered,
-                "total": len(filtered)
-            })
+            result = json.dumps({"services": filtered, "total": len(filtered)})
             self._tool_result_cache[cache_key] = result
             self._tool_call_counts[cache_key] = 1
             return result
         except Exception as e:
-            return json.dumps({
-                "status": "error",
-                "message": str(e)
-            })
+            return json.dumps({"status": "error", "message": str(e)})
 
     def get_service_metadata(self, service_name: str) -> str:
         service_name = self._normalize_service_name(service_name)
@@ -367,7 +369,6 @@ class PasdaAgent(GeoAgent):
             layers = [{"id": l["id"], "name": l["name"]} for l in data.get("layers", [])]
             description = data.get("description", "")
 
-            # Record lineage
             self.lineage_entries.append({
                 "step": "get_service_metadata",
                 "service_name": service_name,
@@ -383,10 +384,7 @@ class PasdaAgent(GeoAgent):
             self._tool_call_counts[cache_key] = 1
             return result
         except Exception as e:
-            return json.dumps({
-                "status": "error",
-                "message": str(e)
-            })
+            return json.dumps({"status": "error", "message": str(e)})
 
     def inspect_layer_fields(self, service_name: str, layer_id: int) -> str:
         service_name = self._normalize_service_name(service_name)
@@ -400,17 +398,9 @@ class PasdaAgent(GeoAgent):
             r.raise_for_status()
 
             data = r.json()
-            fields = [
-                {
-                    "name": f["name"],
-                    "type": f["type"],
-                    "alias": f.get("alias", "")
-                }
-                for f in data.get("fields", [])
-            ]
+            fields = [{"name": f["name"], "type": f["type"], "alias": f.get("alias", "")} for f in data.get("fields", [])]
             geom_type = data.get("geometryType")
 
-            # Record lineage
             self.lineage_entries.append({
                 "step": "inspect_layer_fields",
                 "service_name": service_name,
@@ -419,25 +409,16 @@ class PasdaAgent(GeoAgent):
                 "field_count": len(fields)
             })
 
-            result = json.dumps({
-                "geometry_type": geom_type,
-                "fields": fields
-            })
+            result = json.dumps({"geometry_type": geom_type, "fields": fields})
             self._tool_result_cache[cache_key] = result
             self._tool_call_counts[cache_key] = 1
             return result
         except Exception as e:
-            return json.dumps({
-                "status": "error",
-                "message": str(e)
-            })
+            return json.dumps({"status": "error", "message": str(e)})
 
     def sample_layer_data(self, service_name: str, layer_id: int, where_clause: str) -> str:
         service_name = self._normalize_service_name(service_name)
-        cache_key = self._tool_cache_key(
-            "sample_layer_data",
-            {"service_name": service_name, "layer_id": layer_id, "where_clause": where_clause or "1=1"},
-        )
+        cache_key = self._tool_cache_key("sample_layer_data", {"service_name": service_name, "layer_id": layer_id, "where_clause": where_clause or "1=1"})
         if cache_key in self._tool_result_cache:
             return self._cached_tool_result(cache_key)
 
@@ -455,23 +436,18 @@ class PasdaAgent(GeoAgent):
             data = r.json()
 
             if "error" in data:
-                return json.dumps({
-                    "status": "error",
-                    "message": data["error"].get("message")
-                })
+                return json.dumps({"status": "error", "message": data["error"].get("message")})
 
             features = [f.get("attributes", {}) for f in data.get("features", [])]
 
-            # Store inline artifact (sample data)
             self.inline_artifacts.append({
                 "type": "sample_layer_data",
                 "service_name": service_name,
                 "layer_id": layer_id,
                 "where_clause": where_clause,
-                "sample_records": features[:3]  # keep first 3 for brevity
+                "sample_records": features[:3]
             })
 
-            # Record lineage
             self.lineage_entries.append({
                 "step": "sample_layer_data",
                 "service_name": service_name,
@@ -480,26 +456,17 @@ class PasdaAgent(GeoAgent):
                 "sample_count": len(features)
             })
 
-            result = json.dumps({
-                "sampled_records": features
-            })
+            result = json.dumps({"sampled_records": features})
             self._tool_result_cache[cache_key] = result
             self._tool_call_counts[cache_key] = 1
             return result
         except Exception as e:
-            return json.dumps({
-                "status": "error",
-                "message": str(e)
-            })
+            return json.dumps({"status": "error", "message": str(e)})
 
     def summarize_findings(self, summary_text: str) -> str:
         self.summary = summary_text
-        # Record output text in Execution.Outputs
         self.execution_outputs["text"] = summary_text
-        return json.dumps({
-            "status": "success",
-            "message": "Process documented."
-        })
+        return json.dumps({"status": "success", "message": "Process documented."})
 
     @staticmethod
     def _normalize_tool_value(value: Any) -> Any:
@@ -508,10 +475,7 @@ class PasdaAgent(GeoAgent):
         if isinstance(value, list):
             return [PasdaAgent._normalize_tool_value(item) for item in value]
         if isinstance(value, dict):
-            return {
-                str(key).strip().lower(): PasdaAgent._normalize_tool_value(val)
-                for key, val in sorted(value.items())
-            }
+            return {str(key).strip().lower(): PasdaAgent._normalize_tool_value(val) for key, val in sorted(value.items())}
         return value
 
     def _tool_cache_key(self, tool_name: str, arguments: Dict[str, Any]) -> str:
@@ -531,10 +495,7 @@ class PasdaAgent(GeoAgent):
         if isinstance(payload, dict):
             payload.setdefault("status", "cached")
             payload["cached"] = True
-            payload["message"] = (
-                "This PASDA step was already completed. Use the cached result and move to the next distinct "
-                "action, such as inspecting a layer, sampling records, downloading the best layer, or trying a different candidate."
-            )
+            payload["message"] = "This PASDA step was already completed. Use the cached result."
         return json.dumps(payload)
 
     def _tool_call_repetition_count(self, tool_name: str, arguments: Dict[str, Any]) -> int:
@@ -557,84 +518,16 @@ class PasdaAgent(GeoAgent):
         except Exception:
             return {}
 
-    def _epsg_from_spatial_reference(self, spatial_reference: Any) -> Optional[str]:
-        if not isinstance(spatial_reference, dict):
-            return None
-        wkid = spatial_reference.get("latestWkid") or spatial_reference.get("wkid")
-        try:
-            return f"EPSG:{int(wkid)}"
-        except (TypeError, ValueError):
-            return None
-
     def _details_from_arcgis_metadata(self, metadata: dict) -> dict:
-        if not isinstance(metadata, dict):
-            metadata = {}
-
-        spatial_reference = (
-            metadata.get("sourceSpatialReference")
-            or metadata.get("spatialReference")
-            or (metadata.get("extent") or {}).get("spatialReference")
-        )
-        crs = self._epsg_from_spatial_reference(spatial_reference) or "EPSG:4326"
-
         name = metadata.get("name") or metadata.get("displayField") or "PASDA layer"
-        geometry_type = metadata.get("geometryType") or "Unknown"
-        description = (
-            metadata.get("description")
-            or metadata.get("serviceItemId")
-            or f"Downloaded {name} from PASDA."
-        )
+        description = metadata.get("description") or f"Downloaded {name} from PASDA."
         description = re.sub(r"<[^>]+>", " ", str(description))
         description = re.sub(r"\s+", " ", description).strip()
         if not description or len(description) < 10:
             description = f"Downloaded {name} from PASDA."
+        return {"description": description}
 
-        return {
-            "crs": crs,
-            "geometry_type": geometry_type,
-            "year": "Unknown",
-            "description": description,
-        }
-
-    def _determine_crs_and_details_with_llm(self, metadata: dict) -> dict:
-        metadata_str = json.dumps(metadata)[:4000]
-        prompt = (
-            "Analyze the following ArcGIS layer metadata and extract important details. "
-            "1. Find the coordinate reference system (CRS). Look at 'sourceSpatialReference' or 'extent.spatialReference'. "
-            "Return the CRS as an EPSG code (e.g., 'EPSG:4326') or a WKT string. "
-            "2. Identify geometry type and year/date of the data if available. "
-            "3. Write a one-paragraph description for a user about this dataset content including these details. "
-            "IMPORTANT: Do NOT mention any file names, output paths, or statements like 'the data is saved as'. "
-            "Focus only on the geographical and thematic content of the layer."
-            "Return only a JSON object with keys: 'crs', 'geometry_type', 'year', 'description'. "
-            f"\n\nMetadata: {metadata_str}"
-        )
-        
-        try:
-            response = self.client.chat.completions.create(
-                model=self.model,
-                messages=[{"role": "user", "content": prompt}],
-                response_format={"type": "json_object"},
-                temperature=0
-            )
-            usage = response.usage
-            if usage:
-                self.total_input_tokens += usage.prompt_tokens or 0
-                self.total_output_tokens += usage.completion_tokens or 0
-
-            self.llm_calls += 1
-            # Log this LLM call
-            self.llm_calls_log.append({
-                "timestamp": time.time(),
-                "purpose": "crs_and_details",
-                "prompt": prompt[:500],
-                "response": response.choices[0].message.content[:500]
-            })
-            return json.loads(response.choices[0].message.content)
-        except Exception:
-            return {"crs": "EPSG:4326", "geometry_type": "Unknown", "year": "Unknown", "description": "Data downloaded from PASDA."}
-
-    def download_data(self, service_name: str, layer_id: int, user_query: str) -> str:
+    def download_data(self, service_name: str, layer_id: int, output_filename: str) -> str:
         service_name = self._normalize_service_name(service_name)
         cache_key = self._tool_cache_key("download_data", {"service_name": service_name, "layer_id": layer_id})
         if cache_key in self._tool_result_cache:
@@ -661,52 +554,42 @@ class PasdaAgent(GeoAgent):
                 data = r.json()
 
                 if "error" in data:
-                    return json.dumps({
-                        "status": "error",
-                        "message": data["error"].get("message")
-                    })
+                    return json.dumps({"status": "error", "message": data["error"].get("message")})
 
                 chunk_features = data.get("features", [])
                 if not chunk_features:
                     break
 
                 all_features.extend(chunk_features)
-
                 if len(chunk_features) < limit:
                     break
-
                 offset += limit
 
             if not all_features:
-                return json.dumps({
-                    "status": "error",
-                    "message": "No features returned."
-                })
+                return json.dumps({"status": "error", "message": "No features returned."})
 
-            final_path = self._generate_output_path(user_query)
-            
-            # Metadata analysis
+            final_path = self._generate_output_path(output_filename, template_filename=output_filename)
             raw_meta = self._get_raw_metadata(service_name, layer_id)
             details = self._details_from_arcgis_metadata(raw_meta)
-            
-            self.summary = details.get("description")
+
+            if self.summary:
+                self.summary += f" | {details.get('description')}"
+            else:
+                self.summary = details.get("description")
+
             self.execution_outputs["text"] = self.summary
 
             gdf = gpd.GeoDataFrame.from_features(all_features)
-            
-            # ArcGIS REST GeoJSON responses are longitude/latitude coordinates.
-            # Service metadata may advertise the native service CRS, which would
-            # mislabel the downloaded coordinates and break downstream joins.
             output_crs = "EPSG:4326"
             gdf = gdf.set_crs(output_crs, allow_override=True)
 
             driver = "GeoJSON" if final_path.lower().endswith(".geojson") else "GPKG"
             artifact_type = "GeoJSON" if driver == "GeoJSON" else "GeoPackage"
             gdf.to_file(final_path, driver=driver)
+
             self.downloaded.append(final_path)
             self.feature_counts[final_path] = len(all_features)
 
-            # Record persisted artifact
             self.persisted_artifacts.append({
                 "type": artifact_type,
                 "path": final_path,
@@ -715,7 +598,6 @@ class PasdaAgent(GeoAgent):
                 "source_service": service_name,
                 "source_layer_id": layer_id
             })
-            # Record lineage for download
             self.lineage_entries.append({
                 "step": "download_data",
                 "service_name": service_name,
@@ -737,125 +619,7 @@ class PasdaAgent(GeoAgent):
             return result
         except Exception as e:
             logging.error(f"Failed to download data: {e}")
-            return json.dumps({
-                "status": "error",
-                "message": str(e)
-            })
-
-    def _direct_pasda_candidate(self, user_query: str) -> Optional[Dict[str, Any]]:
-        query = (user_query or "").lower()
-        has_county_term = bool(re.search(r"\b(county|counties)\b", query))
-        boundary_words = ("boundary", "boundaries", "polygon", "polygons", "layer", "dataset")
-
-        if any(term in query for term in ("hospital", "hospitals", "medical center", "healthcare facility")):
-            return {
-                "service_name": "pasda/DepHealth",
-                "layer_id": 6,
-                "label": "Pennsylvania hospitals",
-                "reason": "Matched a common statewide PASDA Department of Health hospital layer.",
-            }
-
-        if re.search(r"\b(school district|school districts)\b", query):
-            return {
-                "service_name": "pasda/PennDOT",
-                "layer_id": 11,
-                "label": "Pennsylvania school district boundaries",
-                "reason": "Matched a common statewide PASDA PennDOT school district boundary layer.",
-            }
-
-        if re.search(r"\b(municipality|municipalities|municipal)\b", query):
-            return {
-                "service_name": "pasda/PennDOT",
-                "layer_id": 10,
-                "label": "Pennsylvania municipal boundaries",
-                "reason": "Matched a common statewide PASDA PennDOT municipal boundary layer.",
-            }
-
-        if has_county_term and (
-            any(word in query for word in boundary_words)
-            or "pennsylvania" in query
-            or re.search(r"\bpa\b", query)
-        ):
-            return {
-                "service_name": "pasda/PennDOT",
-                "layer_id": 7,
-                "label": "Pennsylvania county boundaries",
-                "reason": "Matched a common statewide PASDA boundary layer in the PennDOT service.",
-            }
-
-        if re.search(r"\b(state|commonwealth)\b", query) and any(word in query for word in boundary_words):
-            return {
-                "service_name": "pasda/PennDOT",
-                "layer_id": 13,
-                "label": "Pennsylvania state boundary",
-                "reason": "Matched a common statewide PASDA PennDOT state boundary layer.",
-            }
-
-        if re.search(r"\b(road|roads|highway|highways)\b", query):
-            return {
-                "service_name": "pasda/PennDOT",
-                "layer_id": 4,
-                "label": "Pennsylvania state roads",
-                "reason": "Matched a common statewide PASDA PennDOT state roads layer.",
-            }
-
-        return None
-
-    def _try_direct_pasda_download(self, user_query: str, progress_callback=None) -> bool:
-        candidate = self._direct_pasda_candidate(user_query)
-        if not candidate:
-            return False
-
-        self._emit_progress(
-            progress_callback,
-            stage="source_selection",
-            message=(
-                f"I recognized this as a common PASDA request for {candidate['label']} "
-                "and will try the known service/layer directly."
-            ),
-            data={
-                "service_name": candidate["service_name"],
-                "layer_id": candidate["layer_id"],
-                "reason": candidate["reason"],
-            },
-        )
-        out = self.download_data(
-            candidate["service_name"],
-            candidate["layer_id"],
-            user_query,
-        )
-        try:
-            payload = json.loads(out)
-        except ValueError:
-            payload = {}
-
-        if payload.get("status") == "success" and self.downloaded:
-            self._emit_progress(
-                progress_callback,
-                stage="download_complete",
-                message="I downloaded the matched PASDA layer and will prepare the final response.",
-                data={
-                    "service_name": candidate["service_name"],
-                    "layer_id": candidate["layer_id"],
-                    "feature_count": payload.get("feature_count"),
-                },
-            )
-            return True
-
-        self._emit_progress(
-            progress_callback,
-            stage="fallback_start",
-            message=(
-                "The direct PASDA match did not produce a downloadable dataset, "
-                "so I will continue with the broader discovery workflow."
-            ),
-            data={
-                "service_name": candidate["service_name"],
-                "layer_id": candidate["layer_id"],
-                "download_result": payload,
-            },
-        )
-        return False
+            return json.dumps({"status": "error", "message": str(e)})
 
     def run(
         self,
@@ -880,7 +644,6 @@ class PasdaAgent(GeoAgent):
         self._tool_result_cache = {}
         self._tool_call_counts = {}
 
-        # Reset complementary data collectors
         self.execution_inputs = {"text": user_query, "dataset_path": dataset_path}
         self.execution_outputs = {}
         self.lineage_entries = []
@@ -892,167 +655,108 @@ class PasdaAgent(GeoAgent):
         result = self._empty_result(user_query, dataset_path)
 
         try:
-            logging.info(f"Starting PASDA query: {user_query}")
+            logging.info(f"Starting PASDA AI pipeline: {user_query}")
             self._emit_progress(
                 progress_callback,
                 stage="start",
-                message="I will search PASDA services, inspect candidate layers, sample fields, and download the most relevant dataset.",
-                data={"has_input_dataset": dataset_path is not None, "max_iterations": max_iterations},
+                message="Analyzing prompt with AI and identifying mapped datasets.",
+                data={"max_iterations": max_iterations},
             )
 
             last_assistant_text = None
             workflow_complete = False
 
-            if not self._try_direct_pasda_download(user_query, progress_callback):
-                messages = [
-                    self.system_prompt,
-                    {"role": "user", "content": user_query}
-                ]
+            messages = [
+                self.system_prompt,
+                {"role": "user", "content": user_query}
+            ]
 
-                for _ in range(max_iterations):
-                    if workflow_complete:
-                        break
-                    self._emit_progress(
-                        progress_callback,
-                        stage="source_selection",
-                        message="I am asking the PASDA discovery model to decide the next practical search, inspection, sampling, or download step.",
-                        data={"iteration": self.llm_calls + 1},
-                    )
-                    response = self.client.chat.completions.create(
-                        model=self.model,
-                        messages=messages,
-                        tools=self.tools,
-                        tool_choice="auto",
-                        temperature=0
-                    )
-                    usage = response.usage
-                    if usage:
-                        self.total_input_tokens += usage.prompt_tokens or 0
-                        self.total_output_tokens += usage.completion_tokens or 0
-                    self.llm_calls += 1
-                    # Log LLM call
-                    self.llm_calls_log.append({
-                        "timestamp": time.time(),
-                        "purpose": "agent_reasoning",
-                        "messages_in": [getattr(m, "role", m.get("role", "")) if isinstance(m, dict) else getattr(m, "role", "") for m in messages[-3:]],
-                        "response_snippet": response.choices[0].message.content[:300] if response.choices[0].message.content else "[tool call]"
-                    })
+            for _ in range(max_iterations):
+                if workflow_complete:
+                    break
 
-                    msg = response.choices[0].message
-                    messages.append(msg)
+                self._emit_progress(
+                    progress_callback,
+                    stage="source_selection",
+                    message="Evaluating workflow logic status with LLM...",
+                    data={"iteration": self.llm_calls + 1},
+                )
 
-                    if getattr(msg, "content", None):
-                        last_assistant_text = msg.content
+                response = self.client.chat.completions.create(
+                    model=self.model,
+                    messages=messages,
+                    tools=self.tools,
+                    tool_choice="auto",
+                    temperature=0
+                )
 
-                    if msg.tool_calls:
-                        for call in msg.tool_calls:
-                            self.tool_calls += 1
-                            args = json.loads(call.function.arguments)
-                            fn = call.function.name
-                            repetition_count = self._tool_call_repetition_count(fn, args)
-                            tool_messages = {
-                                "list_services": "I will search PASDA's service catalog with a broad keyword to find possible data services.",
-                                "get_service_metadata": "I found a candidate service and will inspect its layers to see which ones match the request.",
-                                "inspect_layer_fields": "I will inspect this layer's fields and geometry type to verify whether it contains the needed attributes.",
-                                "sample_layer_data": "I will sample records from the candidate layer so I can confirm the actual values before downloading.",
-                                "download_data": "I am confident enough in this layer and will download it as the output dataset.",
-                                "summarize_findings": "I will summarize the selected PASDA source and downloaded dataset for the final response.",
-                            }
-                            progress_message = tool_messages.get(fn, f"I will run the PASDA tool {fn} and inspect its result.")
-                            if repetition_count:
-                                progress_message = (
-                                    f"I already completed this {fn} step, so I will reuse the cached result and push the workflow toward the next distinct action."
-                                )
-                            self._emit_progress(
-                                progress_callback,
-                                stage="source_validation",
-                                message=progress_message,
-                                data={"tool_name": fn, "cached": bool(repetition_count)},
-                            )
+                usage = response.usage
+                if usage:
+                    self.total_input_tokens += usage.prompt_tokens or 0
+                    self.total_output_tokens += usage.completion_tokens or 0
+                self.llm_calls += 1
 
-                            # Record tool call
-                            self.tool_calls_log.append({
-                                "timestamp": time.time(),
-                                "tool_name": fn,
-                                "arguments": args,
-                                "result": None  # will fill after execution
-                            })
+                self.llm_calls_log.append({
+                    "timestamp": time.time(),
+                    "purpose": "agent_reasoning",
+                    "messages_in": [getattr(m, "role", m.get("role", "")) if isinstance(m, dict) else getattr(m, "role", "") for m in messages[-3:]],
+                    "response_snippet": response.choices[0].message.content[:300] if response.choices[0].message.content else "[tool call]"
+                })
 
-                            if fn == "list_services":
-                                out = self.list_services(args.get("keyword", ""))
-                            elif fn == "get_service_metadata":
-                                out = self.get_service_metadata(args["service_name"])
-                            elif fn == "inspect_layer_fields":
-                                out = self.inspect_layer_fields(args["service_name"], args["layer_id"])
-                            elif fn == "sample_layer_data":
-                                out = self.sample_layer_data(
-                                    args["service_name"],
-                                    args["layer_id"],
-                                    args.get("where_clause", "1=1")
-                                )
-                            elif fn == "download_data":
-                                out = self.download_data(
-                                    args["service_name"],
-                                    args["layer_id"],
-                                    user_query
-                                )
-                            elif fn == "summarize_findings":
-                                out = self.summarize_findings(args["summary_text"])
-                                if self.downloaded:
-                                    workflow_complete = True
-                            else:
-                                out = json.dumps({
-                                    "status": "error",
-                                    "message": f"Unknown tool: {fn}"
-                                })
+                msg = response.choices[0].message
+                messages.append(msg)
 
-                            if fn == "download_data":
-                                try:
-                                    download_payload = json.loads(out)
-                                except ValueError:
-                                    download_payload = {}
-                                if download_payload.get("status") == "success" and self.downloaded and self.summary:
-                                    workflow_complete = True
+                if getattr(msg, "content", None):
+                    last_assistant_text = msg.content
 
-                            # Update tool call log with result snippet
-                            self.tool_calls_log[-1]["result"] = out[:500]
-                            self._emit_progress(
-                                progress_callback,
-                                stage="source_validation",
-                                message=f"The {fn} step finished, so I will use its result to decide the next PASDA action.",
-                                data={"tool_name": fn},
-                            )
+                if msg.tool_calls:
+                    for call in msg.tool_calls:
+                        self.tool_calls += 1
+                        args = json.loads(call.function.arguments)
+                        fn = call.function.name
 
-                            messages.append({
-                                "role": "tool",
-                                "tool_call_id": call.id,
-                                "name": fn,
-                                "content": out
-                            })
-                    else:
-                        break
+                        self.tool_calls_log.append({
+                            "timestamp": time.time(),
+                            "tool_name": fn,
+                            "arguments": args,
+                            "result": None
+                        })
+
+                        if fn == "list_services":
+                            out = self.list_services(args.get("keyword", ""))
+                        elif fn == "get_service_metadata":
+                            out = self.get_service_metadata(args["service_name"])
+                        elif fn == "inspect_layer_fields":
+                            out = self.inspect_layer_fields(args["service_name"], args["layer_id"])
+                        elif fn == "sample_layer_data":
+                            out = self.sample_layer_data(args["service_name"], args["layer_id"], args.get("where_clause", "1=1"))
+                        elif fn == "download_data":
+                            out = self.download_data(args["service_name"], args["layer_id"], args.get("output_filename", "dataset"))
+                        elif fn == "summarize_findings":
+                            out = self.summarize_findings(args["summary_text"])
+                            workflow_complete = True
+                        else:
+                            out = json.dumps({"status": "error", "message": f"Unknown tool: {fn}"})
+
+                        self.tool_calls_log[-1]["result"] = out[:500]
+                        messages.append({
+                            "role": "tool",
+                            "tool_call_id": call.id,
+                            "name": fn,
+                            "content": out
+                        })
+                else:
+                    break
 
             if self.summary is None:
                 self.summary = last_assistant_text
                 self.execution_outputs["text"] = self.summary
 
             if not self.downloaded and not self.summary:
-                self._emit_progress(
-                    progress_callback,
-                    stage="warning",
-                    message="I did not find a downloadable PASDA dataset, so I will return a clear no-result summary.",
-                )
                 self.summary = "No datasets were found or downloaded for the query."
                 self.execution_outputs["text"] = self.summary
 
-            # Set output dataset path
             if self.downloaded:
-                self._emit_progress(
-                    progress_callback,
-                    stage="download_complete",
-                    message="I downloaded the PASDA dataset and will package its path, summary, and feature metadata.",
-                    data={"downloaded_count": len(self.downloaded)},
-                )
                 self.execution_outputs["dataset_path"] = self.downloaded[-1]
                 self.execution_outputs["dataset_paths"] = list(self.downloaded)
                 self.execution_outputs["dataset_size"] = {
@@ -1060,29 +764,14 @@ class PasdaAgent(GeoAgent):
                     "feature_count": self.feature_counts.get(self.downloaded[-1])
                 }
 
-            result = self._final_result(
+            return self._final_result(
                 user_text=user_query,
                 input_dataset_path=dataset_path,
                 duration_seconds=time.time() - start_time
             )
 
-            if not result["outputs"]["text"]:
-                result["outputs"]["text"] = "Process completed."
-            self._emit_progress(
-                progress_callback,
-                stage="complete",
-                message="The PASDA workflow is complete. I am preparing the normalized final response.",
-            )
-
-            return result
-
         except Exception as e:
             logging.error(f"Run failed: {e}")
-            self._emit_progress(
-                progress_callback,
-                stage="error",
-                message=f"The PASDA workflow hit an error, so I will return the failure details in diagnostics: {e}",
-            )
             result["duration"] = f"{time.time() - start_time:.2f} seconds"
             result["outputs"]["text"] = f"Agent failed: {str(e)}"
             result["metrics"]["llm_calls"] = self.llm_calls
@@ -1094,12 +783,9 @@ class PasdaAgent(GeoAgent):
                 result["outputs"]["dataset_paths"] = list(self.downloaded)
                 result["outputs"]["dataset_size"]["type"] = "vector"
                 result["outputs"]["dataset_size"]["feature_count"] = self.feature_counts.get(last_path)
-            # Still fill complementary with whatever was collected
+
             result["complementary"] = {
-                "Execution": {
-                    "Inputs": self.execution_inputs,
-                    "Outputs": self.execution_outputs
-                },
+                "Execution": {"Inputs": self.execution_inputs, "Outputs": self.execution_outputs},
                 "Provenance": {
                     "Lineage": self.lineage_entries if self.lineage_entries else {},
                     "Tool Calls": self.tool_calls_log if self.tool_calls_log else {},
