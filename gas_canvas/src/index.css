@@ -1,1 +1,35 @@
 @import "tailwindcss";
+
+@custom-variant dark (&:where(.dark, .dark *));
+
+:root {
+  color-scheme: light;
+}
+
+html,
+body,
+#root {
+  background: #f5f5f5;
+  color: #262626;
+}
+
+.gas-canvas-scroll {
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+
+.gas-canvas-scroll::-webkit-scrollbar {
+  display: none;
+}
+
+@keyframes streamBar {
+  0%,
+  100% {
+    transform: scaleY(0.45);
+    opacity: 0.55;
+  }
+  50% {
+    transform: scaleY(1);
+    opacity: 1;
+  }
+}

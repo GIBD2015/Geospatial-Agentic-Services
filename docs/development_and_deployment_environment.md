@@ -119,7 +119,8 @@ The registry stores fetched agent metadata in a local SQLite database under
 
 ## Get Capabilities Test
 
-After starting the server, test discovery in a browser or Python client:
+After starting the server, test discovery in a browser, Python client, or
+JavaScript client:
 
 ```text
 http://127.0.0.1:4042/?SERVICE=GAS&VERSION=1.0.0&REQUEST=GetCapabilities
@@ -132,6 +133,15 @@ from gas_client import GasClient
 
 client = GasClient("http://127.0.0.1:4042")
 print(client.list_agents())
+```
+
+With the JavaScript SDK:
+
+```javascript
+import { GasClient } from '@gibd/gas-client';
+
+const client = new GasClient("http://127.0.0.1:4042");
+console.log(await client.listAgents());
 ```
 
 Also test one `DescribeAgent` request:

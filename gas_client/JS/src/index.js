@@ -195,19 +195,23 @@ export class GasClient {
         artifacts.forEach((artifact, i) => {
             if (!artifact || typeof artifact !== 'object') return;
             const spatialMetadata = artifact.spatial_metadata || {};
-            const name = artifact.filename || artifact.name || `artifact_${i + 1}`;
+            const semanticName = artifact.name;
+            const filename = artifact.filename;
             const role = artifact.role;
             const label = artifact.label || role;
             const originalFilename = artifact.original_filename;
+            const description = artifact.description;
             const artifactType = artifact.type || spatialMetadata.type;
             const artifactFormat = artifact.format || artifact.mime_type;
             const sizeBytes = artifact.size_bytes;
-            const displayName = label ? `${label} (${name})` : name;
+            const displayName = semanticName || label || filename || `artifact_${i + 1}`;
 
             console.log(`  ${i + 1}. ${displayName}`);
             console.log(`     type=${GasClient._formatDisplayValue(artifactType)} format=${GasClient._formatDisplayValue(artifactFormat)} size=${GasClient._formatDisplayValue(sizeBytes)} bytes`);
             if (role) console.log(`     role=${role}`);
+            if (filename) console.log(`     filename=${filename}`);
             if (originalFilename) console.log(`     original=${originalFilename}`);
+            if (description) console.log(`     description=${description}`);
             if (artifact.url) console.log(`     url=${artifact.url}`);
         });
 

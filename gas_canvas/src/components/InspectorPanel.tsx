@@ -3,20 +3,42 @@ import {
   X, 
   FileText, 
   Terminal, 
-  Play, 
-  Save, 
   Key, 
   AlertTriangle, 
   Download, 
   Eye, 
+  FileCode,
+  Files,
+  Map,
   Database, 
   Network,
   Settings,
-  HelpCircle
+  HelpCircle,
+  Info
 } from "lucide-react";
-import { AgentNode, NodeConnection, TaskResult } from "../types";
+import { AgentNode, NodeConnection, TaskArtifact, TaskResult } from "../types";
 import { getAgentAesthetics } from "./AgentNodeCard";
 import { AGENT_TEMPLATES } from "./SidebarPanel";
+import { getArtifactFilename, getArtifactHoverText, getArtifactPreviewTitle, getArtifactSemanticName } from "../lib/artifacts";
+
+const getArtifactExtension = (name = "", format = "") => {
+  const normalizedFormat = format.toLowerCase();
+  if (normalizedFormat) return normalizedFormat;
+  return name.split(".").pop()?.toLowerCase() || "";
+};
+
+const isSpatialArtifact = (name = "", format = "") => {
+  const extension = getArtifactExtension(name, format);
+  return extension === "geojson" || extension === "gpkg";
+};
+
+const isHtmlArtifact = (name = "", format = "") => {
+  const extension = getArtifactExtension(name, format);
+  return extension === "html" || extension === "htm";
+};
+
+const utilityButtonClass =
+  "px-2 py-1 bg-neutral-100 hover:bg-neutral-200 text-neutral-700 border border-neutral-200 rounded text-[10px] font-semibold flex items-center space-x-1 transition-colors";
 
 interface InspectorPanelProps {
   selectedNode: AgentNode | null;
@@ -24,9 +46,10 @@ interface InspectorPanelProps {
   nodes: AgentNode[];
   servers?: { url: string; providerName: string; agents: any[] }[];
   onUpdateNode: (nodeId: string, updates: Partial<AgentNode>) => void;
+  onDescribeAgent: (serverUrl: string, agentId: string) => void;
   onClose: () => void;
-  onExecuteNode: (nodeId: string) => void;
-  onOpenPreview: (url: string, title: string) => void;
+  onOpenPreview: (url: string, title: string, artifact?: TaskArtifact) => void;
+  onViewAllArtifacts: (artifacts: TaskArtifact[]) => void;
   width: number;
 }
 
@@ -36,23 +59,39 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({
   nodes,
   servers = [],
   onUpdateNode,
+  onDescribeAgent,
   onClose,
-  onExecuteNode,
   onOpenPreview,
+  onViewAllArtifacts,
   width,
 }) => {
   const logTerminalRef = useRef<HTMLDivElement>(null);
-  const [localInstructions, setLocalInstructions] = useState("");
-  const [localName, setLocalName] = useState("");
+  const instructionsTextareaRef = useRef<HTMLTextAreaElement>(null);
+  const [draftInstructions, setDraftInstructions] = useState("");
+  const [isEditingInstructions, setIsEditingInstructions] = useState(false);
   const [showKeyOverrides, setShowKeyOverrides] = useState(false);
 
-  // Synchronize local states when selection shifts
+  const resizeInstructionsTextarea = () => {
+    const textarea = instructionsTextareaRef.current;
+    if (!textarea) return;
+
+    const maxHeight = 152;
+    textarea.style.height = "auto";
+    const nextHeight = Math.min(textarea.scrollHeight, maxHeight);
+    textarea.style.height = `${nextHeight}px`;
+    textarea.style.overflowY = textarea.scrollHeight > maxHeight ? "auto" : "hidden";
+  };
+
+  // Keep a local textarea draft so large prompts do not update the canvas on every keystroke.
   useEffect(() => {
-    if (selectedNode) {
-      setLocalInstructions(selectedNode.instructions);
-      setLocalName(selectedNode.name);
+    if (selectedNode && !isEditingInstructions) {
+      setDraftInstructions(selectedNode.instructions);
     }
-  }, [selectedNode?.id]);
+  }, [isEditingInstructions, selectedNode?.id, selectedNode?.instructions]);
+
+  useEffect(() => {
+    resizeInstructionsTextarea();
+  }, [draftInstructions, selectedNode?.id]);
 
   // Handle auto-scroll inside the logs terminal matching SSE stream increments
   useEffect(() => {
@@ -82,13 +121,10 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({
   // Retrieve templates
   const template = AGENT_TEMPLATES.find((tpl) => tpl.agent_id === selectedNode.agentId);
   const { iconColor, icon: Icon } = getAgentAesthetics(selectedNode.agentId);
-
-  const handleSaveNameAndPrompt = () => {
-    onUpdateNode(selectedNode.id, {
-      name: localName,
-      instructions: localInstructions
-    });
-  };
+  const selectedServerProviderName =
+    servers.find((server) => server.url === selectedNode.serverUrl)?.providerName ||
+    selectedNode.serverUrl ||
+    "Unknown GAS Server";
 
   return (
     <div style={{ width: `${width}px` }} className="border-l border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 flex flex-col h-full shrink-0 shadow-xl overflow-hidden">
@@ -101,35 +137,33 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({
               {selectedNode.name}
             </h4>
             <div className="mt-1 space-y-0.5">
-              <p className="text-[10px] text-neutral-400 font-mono truncate">
-                {servers.find(s => s.url === selectedNode.serverUrl || s.agents.some((a: any) => a.agent_id === selectedNode.agentId))?.providerName || "Geoinformation and Big Data Research Lab (GIBD)"}
+              <p
+                className="text-[10px] text-neutral-500 truncate"
+                title={selectedServerProviderName}
+              >
+                {selectedServerProviderName}
               </p>
             </div>
           </div>
         </div>
-        <button
-          onClick={onClose}
-          className="p-1 hover:bg-neutral-150 rounded dark:hover:bg-neutral-800 text-neutral-500"
-        >
-          <X className="w-4 h-4" />
-        </button>
+        <div className="flex items-center gap-1">
+          <button
+            onClick={() => onDescribeAgent(selectedNode.serverUrl || "", selectedNode.agentId)}
+            title="View agent details"
+            className="p-1 hover:bg-neutral-150 rounded dark:hover:bg-neutral-800 text-neutral-500 hover:text-sky-600 cursor-pointer"
+          >
+            <Info className="w-4 h-4" />
+          </button>
+          <button
+            onClick={onClose}
+            className="p-1 hover:bg-neutral-150 rounded dark:hover:bg-neutral-800 text-neutral-500"
+          >
+            <X className="w-4 h-4" />
+          </button>
+        </div>
       </div>
 
       <div className="flex-1 overflow-y-auto p-4 space-y-4">
-        {/* EDIT NAME */}
-        <div className="space-y-1.5">
-          <label className="text-[11px] font-bold text-neutral-500 dark:text-neutral-400 uppercase">
-            Step Name
-          </label>
-          <input
-            type="text"
-            value={localName}
-            onChange={(e) => setLocalName(e.target.value)}
-            onBlur={handleSaveNameAndPrompt}
-            className="w-full text-xs p-1.5 border border-neutral-300 dark:border-neutral-700 bg-neutral-50 dark:bg-neutral-950 rounded-lg text-neutral-800 dark:text-neutral-100 focus:outline-none focus:ring-1 focus:ring-sky-500"
-          />
-        </div>
-
         {/* TASK INSTRUCTIONS / PROMPT FOR LLM */}
         <div className="space-y-1.5">
           <div className="flex items-center justify-between">
@@ -138,20 +172,25 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({
             </label>
           </div>
           <textarea
-            value={localInstructions}
-            onChange={(e) => setLocalInstructions(e.target.value)}
-            onBlur={handleSaveNameAndPrompt}
-            rows={5}
+            ref={instructionsTextareaRef}
+            value={draftInstructions}
+            onChange={(e) => {
+              const nextInstructions = e.target.value;
+              setDraftInstructions(nextInstructions);
+              onUpdateNode(selectedNode.id, { instructions: nextInstructions });
+              requestAnimationFrame(resizeInstructionsTextarea);
+            }}
+            onFocus={() => setIsEditingInstructions(true)}
+            onBlur={() => {
+              if (draftInstructions !== selectedNode.instructions) {
+                onUpdateNode(selectedNode.id, { instructions: draftInstructions });
+              }
+              setIsEditingInstructions(false);
+            }}
+            rows={2}
             placeholder="Tell the agent what to perform..."
-            className="w-full text-xs p-2 border border-neutral-300 dark:border-neutral-700 bg-neutral-50 dark:bg-neutral-950 rounded-lg text-neutral-800 dark:text-neutral-100 focus:outline-none focus:ring-1 focus:ring-sky-500 resize-none font-sans leading-relaxed"
+            className="w-full min-h-[56px] max-h-[152px] text-sm p-2.5 border border-neutral-300 dark:border-neutral-700 bg-neutral-50 dark:bg-neutral-950 rounded-lg text-neutral-800 dark:text-neutral-100 focus:outline-none focus:ring-1 focus:ring-sky-500 resize-none font-sans leading-relaxed"
           />
-          <button 
-            onClick={handleSaveNameAndPrompt}
-            className="w-full py-1.5 bg-neutral-100 hover:bg-neutral-200 text-neutral-800 dark:bg-neutral-800 dark:hover:bg-neutral-700 dark:text-neutral-200 rounded text-xs font-semibold flex items-center justify-center space-x-1.5"
-          >
-            <Save className="w-3.5 h-3.5" />
-            <span>Apply Changes</span>
-          </button>
         </div>
 
         {/* INPUT BINDINGS OVERVIEW */}
@@ -162,7 +201,7 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({
           </label>
           
           {parentNodes.length === 0 ? (
-            <div className="p-2 border border-dashed border-neutral-200 dark:border-neutral-800 rounded-lg text-[10px] text-neutral-450 dark:text-neutral-500 italic bg-neutral-50/40">
+            <div className="p-2.5 border border-dashed border-neutral-200 dark:border-neutral-800 rounded-lg text-xs leading-relaxed text-neutral-600 dark:text-neutral-500 italic bg-neutral-50/40">
               No input links connected. Link an output socket from another agent to bind dataset URLs.
             </div>
           ) : (
@@ -170,7 +209,7 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({
               {parentNodes.map((parent) => (
                 <div 
                   key={parent.id} 
-                  className="flex items-center justify-between p-2 rounded-lg bg-emerald-50/40 dark:bg-emerald-950/25 border border-emerald-100 dark:border-emerald-900/50 text-[11px]"
+                  className="flex items-center justify-between p-2 rounded-lg bg-emerald-50/40 dark:bg-emerald-950/25 border border-emerald-100 dark:border-emerald-900/50 text-xs"
                 >
                   <span className="font-semibold text-emerald-800 dark:text-emerald-400 truncate max-w-[140px]">
                     📦 {parent.name}
@@ -199,7 +238,7 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({
 
           {showKeyOverrides && (
             <div className="space-y-2 p-2 bg-neutral-50/65 dark:bg-neutral-950/40 rounded-lg border border-neutral-200 dark:border-neutral-800/80">
-              <p className="text-[10px] text-neutral-500 leading-normal">
+              <p className="text-xs text-neutral-500 leading-relaxed">
                 Override default keys specifically for this agent instance block if required.
               </p>
               
@@ -212,7 +251,7 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({
                   onChange={(e) => onUpdateNode(selectedNode.id, {
                     credentials: { ...selectedNode.credentials, OPENAI_API_KEY: e.target.value }
                   })}
-                  className="w-full text-xs p-1.5 border border-neutral-300 dark:border-neutral-700 rounded-md bg-white dark:bg-neutral-900 text-neutral-800 dark:text-neutral-100"
+                  className="w-full text-sm p-2 border border-neutral-300 dark:border-neutral-700 rounded-md bg-white dark:bg-neutral-900 text-neutral-800 dark:text-neutral-100"
                 />
               </div>
             </div>
@@ -228,19 +267,21 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({
           
           <div 
             ref={logTerminalRef}
-            className="w-full h-44 bg-neutral-900 text-neutral-100 p-2.5 rounded-lg font-mono text-[10px] overflow-y-auto scrollbar-thin flex flex-col space-y-1"
+            className="w-full h-44 bg-neutral-100 text-black border border-neutral-200 p-3 rounded-lg font-mono text-xs leading-relaxed overflow-y-auto scrollbar-thin flex flex-col space-y-1"
           >
             {selectedNode.logs.length === 0 ? (
-              <span className="text-neutral-500 italic">No output logged yet. Run step to view connection logs.</span>
+              <span className="text-neutral-700 italic">No output logged yet. Run step to view connection logs.</span>
             ) : (
               selectedNode.logs.map((log, index) => {
-                let colorClass = "text-neutral-300";
-                if (log.startsWith("[ERROR]")) {
-                  colorClass = "text-rose-400 font-semibold";
-                } else if (log.startsWith("[SUCCESS]")) {
-                  colorClass = "text-emerald-400 font-semibold";
-                } else if (log.startsWith("[EVENT]")) {
-                  colorClass = "text-sky-350";
+                let colorClass = "text-black";
+                if (log.startsWith("[ERROR]") || log.includes("stream_error:") || log.includes("task_failed:") || log.includes("task_rejected:")) {
+                  colorClass = "text-rose-700 font-semibold";
+                } else if (log.startsWith("[SUCCESS]") || log.includes("task_succeeded:") || log.includes("task_result:")) {
+                  colorClass = "text-emerald-700 font-semibold";
+                } else if (log.includes("task_cancel")) {
+                  colorClass = "text-amber-700 font-semibold";
+                } else if (log.startsWith("[EVENT]") || log.includes("stream_connected:") || log.includes("task_accepted:") || log.includes("task_submitting:")) {
+                  colorClass = "text-sky-700";
                 }
                 
                 return (
@@ -260,57 +301,61 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({
               <FileText className="w-3.5 h-3.5" />
               <span>Output & Response</span>
             </label>
-            {selectedNode.results && (
-              <a
-                href={`data:application/json;charset=utf-8,${encodeURIComponent(JSON.stringify(selectedNode.results, null, 2))}`}
-                download={`${selectedNode.id}_full_response.json`}
-                className="px-2 py-1 bg-neutral-900 hover:bg-neutral-800 text-white dark:bg-neutral-100 dark:hover:bg-neutral-200 dark:text-neutral-900 rounded text-[9px] font-semibold flex items-center space-x-1 transition-colors"
-                title="Download Full Response JSON"
-              >
-                <FileText className="w-3 h-3" />
-                <span>Full Response JSON</span>
-              </a>
-            )}
           </div>
 
           {!selectedNode.results?.outputs?.artifacts || selectedNode.results.outputs.artifacts.length === 0 ? (
-            <div className="text-[10px] text-neutral-450 italic text-center py-2 bg-neutral-50 dark:bg-neutral-950/20 rounded-lg">
-              {selectedNode.status === "failed" ? "Agent execution failed." : "No artifacts collected yet. Run connection pipeline."}
+            <div className="text-xs text-neutral-500 italic text-center py-2.5 bg-neutral-50 dark:bg-neutral-950/20 rounded-lg">
+              {selectedNode.status === "error"
+                ? "Agent execution failed."
+                : selectedNode.status === "canceled"
+                  ? "Agent execution was canceled."
+                  : "No artifacts collected yet. Run connection pipeline."}
             </div>
           ) : (
             <div className="space-y-1.5">
               {selectedNode.results.outputs.artifacts.map((art, index) => {
-                const isHtml = art.format?.toLowerCase() === "html" || art.name?.toLowerCase().endsWith(".html");
+                const filename = getArtifactFilename(art, `artifact_${index}.${art.format || "file"}`);
+                const displayName = getArtifactSemanticName(art, filename);
+                const previewTitle = getArtifactPreviewTitle(art, filename);
+                const isSpatial = isSpatialArtifact(filename, art.format);
+                const isHtmlOutput = isHtmlArtifact(filename, art.format);
                 return (
                   <div
                     key={index}
-                    className="flex flex-col p-2 bg-neutral-50 hover:bg-neutral-100 dark:bg-neutral-950 dark:hover:bg-neutral-900 border border-neutral-200 dark:border-neutral-800 rounded-lg text-xs"
+                    className="flex flex-col p-2.5 bg-neutral-50 hover:bg-neutral-100 dark:bg-neutral-950 dark:hover:bg-neutral-900 border border-neutral-200 dark:border-neutral-800 rounded-lg text-sm"
+                    title={getArtifactHoverText(art)}
                   >
                     <div className="flex items-center justify-between space-x-2">
-                      <span className="font-semibold text-neutral-700 dark:text-neutral-300 truncate font-mono text-[11px] min-w-0">
-                        {art.name || `artifact_${index}.${art.format || 'txt'}`}
+                      <span className="font-semibold text-neutral-700 dark:text-neutral-300 truncate font-mono text-xs min-w-0">
+                        {displayName}
                       </span>
                       <span className="text-[9px] bg-neutral-200 text-neutral-700 dark:bg-neutral-800 dark:text-neutral-300 px-1 py-0.5 rounded font-bold uppercase shrink-0">
                         {art.format || "FILE"}
                       </span>
                     </div>
                     {art.description && (
-                      <p className="text-[10px] text-neutral-500 mt-1">{art.description}</p>
+                      <p className="text-xs text-neutral-500 mt-1 leading-relaxed">{art.description}</p>
                     )}
 
                     <div className="mt-2.5 flex items-center justify-end space-x-1.5">
                       <button
-                        onClick={() => onOpenPreview(art.url, art.name || "Artifact Preview")}
+                        onClick={() => onOpenPreview(art.url, previewTitle, art)}
                         className="px-2 py-1 bg-sky-600 hover:bg-sky-500 text-white rounded text-[10px] font-semibold flex items-center space-x-1 transition-colors"
                       >
-                        <Eye className="w-3 h-3" />
-                        <span>Preview</span>
+                        {isSpatial ? (
+                          <Map className="w-3 h-3" />
+                        ) : isHtmlOutput ? (
+                          <FileCode className="w-3 h-3" />
+                        ) : (
+                          <Eye className="w-3 h-3" />
+                        )}
+                        <span>{isSpatial ? "Add to Map" : isHtmlOutput ? "Open HTML" : "View Artifact"}</span>
                       </button>
                       <a
                         href={art.url}
                         target="_blank"
                         rel="referrer"
-                        className="px-2 py-1 bg-neutral-900 hover:bg-neutral-800 text-white dark:bg-neutral-100 dark:hover:bg-neutral-200 dark:text-neutral-900 rounded text-[10px] font-semibold flex items-center space-x-1 transition-colors"
+                        className="px-2 py-1 bg-neutral-100 hover:bg-neutral-200 text-neutral-700 border border-neutral-200 rounded text-[10px] font-semibold flex items-center space-x-1 transition-colors"
                       >
                         <Download className="w-3 h-3" />
                         <span>Download</span>
@@ -321,19 +366,45 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({
               })}
             </div>
           )}
-        </div>
-      </div>
 
-      {/* FOOTER CONTROLS */}
-      <div className="p-4 border-t border-neutral-100 dark:border-neutral-800 bg-neutral-50/50 dark:bg-neutral-950/40">
-        <button
-          onClick={() => onExecuteNode(selectedNode.id)}
-          disabled={selectedNode.status === "running"}
-          className="w-full flex items-center justify-center space-x-1.5 py-2.5 bg-neutral-900 hover:bg-neutral-800 dark:bg-neutral-100 dark:hover:bg-neutral-200 dark:text-neutral-900 text-white text-xs font-bold rounded-lg shadow-sm disabled:opacity-50 transition-colors"
-        >
-          <Play className="w-4 h-4 fill-current animate-pulse-slow" />
-          <span>{selectedNode.status === "running" ? "Streaming Live..." : "Execute This Agent"}</span>
-        </button>
+          {(selectedNode.lastRequest || selectedNode.results) && (
+            <div className="flex items-center justify-end gap-1.5 pt-1">
+              {selectedNode.results?.outputs?.artifacts && selectedNode.results.outputs.artifacts.length > 0 && (
+                <button
+                  type="button"
+                  onClick={() => onViewAllArtifacts(selectedNode.results?.outputs?.artifacts || [])}
+                  className={utilityButtonClass}
+                  title="View all artifacts in workspace tabs"
+                >
+                  <Files className="w-3 h-3" />
+                  <span>View All Artifacts</span>
+                </button>
+              )}
+              {selectedNode.lastRequest && (
+                <a
+                  href={`data:application/json;charset=utf-8,${encodeURIComponent(JSON.stringify(selectedNode.lastRequest, null, 2))}`}
+                  download={`${selectedNode.id}_request.json`}
+                  className={utilityButtonClass}
+                  title="Download Request JSON"
+                >
+                  <FileText className="w-3 h-3" />
+                  <span>Request JSON</span>
+                </a>
+              )}
+              {selectedNode.results && (
+                <a
+                  href={`data:application/json;charset=utf-8,${encodeURIComponent(JSON.stringify(selectedNode.results, null, 2))}`}
+                  download={`${selectedNode.id}_response.json`}
+                  className={utilityButtonClass}
+                  title="Download Response JSON"
+                >
+                  <FileText className="w-3 h-3" />
+                  <span>Response JSON</span>
+                </a>
+              )}
+            </div>
+          )}
+        </div>
       </div>
     </div>
   );

@@ -466,15 +466,17 @@ Example successful task response:
     "summary": "Joined county boundaries to obesity rates using county FIPS codes and saved the result as a GeoPackage.",
     "artifacts": [
       {
-        "name": "county_obesity_join.gpkg",
+        "name": "County Obesity Join GeoPackage",
         "role": "dataset",
+        "format": "gpkg",
+        "description": "GeoPackage vector layer with joined county obesity rates; use it as a map layer or downstream spatial-analysis input.",
+        "filename": "vector_analysis_agent-1842-kdpa-9301.gpkg",
         "label": "Dataset",
         "original_filename": "county_obesity_join.gpkg",
         "type": "downloadable_file",
-        "format": "gpkg",
         "mime_type": "application/geopackage+sqlite3",
         "size_bytes": 1843920,
-        "url": "https://your-gas-server.example.com/agents/vector_analysis_agent/data/county_obesity_join.gpkg",
+        "url": "https://your-gas-server.example.com/agents/vector_analysis_agent/data/vector_analysis_agent-1842-kdpa-9301.gpkg",
         "spatial_metadata": {
           "type": "vector",
           "crs": "EPSG:4326",
@@ -681,11 +683,18 @@ inspect, download, display, or pass the artifact into another GAS service.
 
 Common artifact fields include:
 
-- `name`: artifact file name.
+- `name`: human-readable artifact name for display and orchestration, such as
+  `County Obesity GeoPackage` or `HTML Report`.
+- `role`: stable selector for client code. Roles may be generic, such as
+  `output` or `dataset`, or agent-specific, such as `ndvi_map_html_file`.
+- `format`: file format, such as gpkg, geojson, tif, csv, html, txt, json, or
+  png.
+- `description`: short explanation of what the artifact contains and how a
+  downstream client or agent can use it.
+- `filename`: server storage/download filename. Use this, not `name`, when a
+  client needs the exact file identity.
 - `type`: delivery kind or artifact category, commonly `downloadable_file` for
   URL-delivered files. Spatial data type is reported in `spatial_metadata.type`.
-- `format`: file format, such as gpkg, geojson, tif, csv, html, txt, json, or
-  PNG.
 - `mime_type`: media type when known.
 - `size_bytes`: artifact size.
 - `url`: downloadable artifact URL when `artifact_delivery` is `URL`.
@@ -704,15 +713,17 @@ Example vector artifact:
 
 ```json
 {
-  "name": "analysis_result.gpkg",
+  "name": "County Obesity GeoPackage",
   "role": "dataset",
+  "format": "gpkg",
+  "description": "GeoPackage vector layer with county obesity attributes; use it as a map layer or spatial analysis input.",
+  "filename": "vector_analysis_agent-1842-kdpa-9301.gpkg",
   "label": "Dataset",
   "original_filename": "analysis_result.gpkg",
   "type": "downloadable_file",
-  "format": "gpkg",
   "mime_type": "application/geopackage+sqlite3",
   "size_bytes": 1843920,
-  "url": "https://your-gas-server.example.com/agents/vector_analysis_agent/data/analysis_result.gpkg",
+  "url": "https://your-gas-server.example.com/agents/vector_analysis_agent/data/vector_analysis_agent-1842-kdpa-9301.gpkg",
   "spatial_metadata": {
     "type": "vector",
     "crs": "EPSG:4326",

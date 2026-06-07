@@ -7,12 +7,16 @@ __pycache__/
 .pytest_cache/
 .tmp/
 .tmp_pytest_run/
+.tools/
 .ipynb_checkpoints/
 
 .env
 .env.*
 !.env.example
+!gas_canvas/.env.example
 !gas_registry/.env.example
+node_modules/
+*.log
 
 cache/
 Data/

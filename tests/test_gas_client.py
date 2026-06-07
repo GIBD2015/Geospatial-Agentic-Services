@@ -160,6 +160,7 @@ def test_print_task_summary_includes_usage_artifacts_and_diagnostics(capsys):
                 "artifacts": [
                     {
                         "name": "map.png",
+                        "filename": "map.png",
                         "role": "interactive_map_png_file",
                         "label": "Interactive Map Png",
                         "original_filename": "rendered_map.png",
@@ -187,10 +188,10 @@ def test_print_task_summary_includes_usage_artifacts_and_diagnostics(capsys):
     assert "Input tokens : 100" in output
     assert "Output tokens: 25" in output
     assert "Total tokens : 125" in output
-    assert "Interactive Map Png (map.png)" in output
+    assert "1. map.png" in output
+    assert "filename=map.png" in output
     assert "role=interactive_map_png_file" in output
     assert "original=rendered_map.png" in output
-    assert "map.png" in output
     assert "Warnings     : -" in output
 
 
@@ -713,7 +714,9 @@ def test_print_artifacts_outputs_readable_list(capsys):
                     "role": "map_html",
                     "format": "html",
                     "type": "downloadable_file",
-                    "name": "map.html",
+                    "name": "Interactive Map",
+                    "description": "Browser-ready map artifact.",
+                    "filename": "map.html",
                     "url": "http://example.test/map.html",
                 },
                 {
@@ -733,7 +736,10 @@ def test_print_artifacts_outputs_readable_list(capsys):
     output = capsys.readouterr().out
 
     assert "Artifacts: 1" in output
-    assert "Map HTML" in output
+    assert "Interactive Map" in output
+    assert "filename" in output
+    assert "map.html" in output
+    assert "Browser-ready map artifact." in output
     assert "role" in output
     assert "map_html" in output
     assert "Daily Table" not in output

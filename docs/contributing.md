@@ -1,7 +1,7 @@
 # Contributing
 
 This page summarizes where to start when improving the GAS codebase,
-documentation, schemas, examples, registry, server framework, or client SDK.
+documentation, schemas, examples, registry, server framework, or client SDKs.
 
 For the canonical repository contribution guide, see
 [CONTRIBUTING.md](https://github.com/GIBD2015/geospatial-agentic-services/blob/main/CONTRIBUTING.md).
@@ -20,7 +20,7 @@ For the canonical repository contribution guide, see
 - [Development and Deployment Environment](development_and_deployment_environment.md)
 - [GAS Server Framework](gas_server_architecture.md)
 - [GAS Interfaces](gas_interfaces.md)
-- [GAS Client SDK](gas_client_sdk.md)
+- [GAS Client SDKs](gas_client_sdk.md)
 - [GAS Registry](gas_registry.md)
 - [Adding a GAS Agent Service](adding_an_agent_service.md)
 

@@ -568,6 +568,12 @@ def test_new_agent_results_normalize_to_standard_service_response(tmp_path, monk
         assert payload["agent"]["id"] == agent_id
         assert payload["outputs"]["summary"]
         assert payload["outputs"]["artifacts"], artifact_agent_id
+        for artifact in payload["outputs"]["artifacts"]:
+            assert artifact.get("name"), artifact
+            assert artifact.get("role"), artifact
+            assert artifact.get("format"), artifact
+            assert artifact.get("description"), artifact
+            assert artifact.get("filename"), artifact
         assert "data_summary" in payload["outputs"]
         assert "inputs" in payload["execution"]
         assert "code" in payload["execution"]
@@ -626,7 +632,9 @@ def test_html_artifact_references_are_rewritten_to_public_artifact_urls(tmp_path
     artifact_formats = {artifact.get("format") for artifact in payload["outputs"]["artifacts"]}
     assert {"txt", "html", "png"} <= artifact_formats
     html_artifact = next(artifact for artifact in payload["outputs"]["artifacts"] if artifact.get("format") == "html")
-    rewritten_html = (tmp_path / "Data" / "spatial_statistics_agent" / html_artifact["name"]).read_text(encoding="utf-8")
+    assert html_artifact["name"] == "HTML Report"
+    assert html_artifact["role"] == "html_report_file"
+    rewritten_html = (tmp_path / "Data" / "spatial_statistics_agent" / html_artifact["filename"]).read_text(encoding="utf-8")
     assert 'src="http://testserver/agents/spatial_statistics_agent/data/' in rewritten_html
     assert 'href="http://testserver/agents/spatial_statistics_agent/data/' in rewritten_html
 
@@ -1159,8 +1167,133 @@ def test_external_url_artifacts_include_semantic_role_labels(tmp_path, monkeypat
     artifact = payload["outputs"]["artifacts"][0]
     assert artifact["role"] == "ndvi_thumbnail_png_url"
     assert artifact["label"] == "Earth Engine NDVI Preview"
-    assert artifact["name"] == "gee_ndvi_thumbnail.png"
+    assert artifact["name"] == "Earth Engine NDVI Preview PNG"
+    assert artifact["filename"] == "gee_ndvi_thumbnail.png"
+    assert artifact["description"]
     assert artifact["url"] == "https://earthengine.example/thumbnail.png"
+
+
+def test_weak_generated_filenames_do_not_drive_semantic_artifact_names(tmp_path, monkeypatch):
+    monkeypatch.setattr(service_core, "DATA_DIR", tmp_path / "Data")
+    output_dir = tmp_path / "generated"
+    output_dir.mkdir()
+    output_path = output_dir / "find_out_208141.geojson"
+    output_path.write_text(
+        json.dumps(
+            {
+                "type": "FeatureCollection",
+                "features": [
+                    {
+                        "type": "Feature",
+                        "properties": {"county": "Example County", "earthquake_count": 3},
+                        "geometry": {"type": "Point", "coordinates": [-77.0, 40.0]},
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    payload = _build_task_payload(
+        task_id="weak-filename-artifact-test-task",
+        agent_id="vector_analysis_agent",
+        agent_name="Vector Analysis Agent",
+        agent_version="1.0.0",
+        state="TASK_STATE_COMPLETED",
+        query="Find out how many earthquake in each county. Return geojson",
+        requested_skill=None,
+        result={
+            "outputs": {
+                "text": "Created a county-level earthquake count GeoJSON.",
+                "dataset_path": str(output_path),
+            },
+            "metrics": {"number_of_artifacts": 1},
+        },
+        error_message=None,
+        agent_id_for_artifacts="vector_analysis_agent",
+        output_delivery="url",
+        public_base_url="http://testserver",
+    )
+
+    artifact = payload["outputs"]["artifacts"][0]
+    assert artifact["filename"].startswith("vector_analysis_agent-")
+    assert artifact["original_filename"] == "find_out_208141.geojson"
+    assert artifact["name"] == "Earthquake Count by County GeoJSON"
+    assert "Find Out" not in artifact["name"]
+    assert "representing Earthquake Count by County" in artifact["description"]
+
+
+def test_download_action_filenames_use_dataset_subject_from_context(tmp_path, monkeypatch):
+    monkeypatch.setattr(service_core, "DATA_DIR", tmp_path / "Data")
+    output_dir = tmp_path / "generated"
+    output_dir.mkdir()
+    output_path = output_dir / "download_ca_3422342343.gpkg"
+    output_path.write_text("placeholder", encoding="utf-8")
+
+    payload = _build_task_payload(
+        task_id="download-action-filename-test-task",
+        agent_id="geospatial_data_retrieval_agent",
+        agent_name="Geospatial Data Retrieval Agent",
+        agent_version="1.0.0",
+        state="TASK_STATE_COMPLETED",
+        query="Download CA counties as GeoPackage",
+        requested_skill=None,
+        result={
+            "outputs": {
+                "text": "Downloaded California county boundaries.",
+                "dataset_path": str(output_path),
+            },
+            "metrics": {"number_of_artifacts": 1},
+        },
+        error_message=None,
+        agent_id_for_artifacts="geospatial_data_retrieval_agent",
+        output_delivery="url",
+        public_base_url="http://testserver",
+    )
+
+    artifact = payload["outputs"]["artifacts"][0]
+    assert artifact["name"] == "California Counties GeoPackage"
+    assert "Download" not in artifact["name"]
+    assert "3422342343" not in artifact["name"]
+    assert artifact["original_filename"] == "download_ca_3422342343.gpkg"
+
+
+def test_multiple_state_outputs_use_each_artifacts_filename_subject(tmp_path, monkeypatch):
+    monkeypatch.setattr(service_core, "DATA_DIR", tmp_path / "Data")
+    output_dir = tmp_path / "generated"
+    output_dir.mkdir()
+    ca_path = output_dir / "california_counties.geojson"
+    pa_path = output_dir / "pennsylvania_counties.geojson"
+    empty_geojson = json.dumps({"type": "FeatureCollection", "features": []})
+    ca_path.write_text(empty_geojson, encoding="utf-8")
+    pa_path.write_text(empty_geojson, encoding="utf-8")
+
+    payload = _build_task_payload(
+        task_id="multi-state-artifact-name-test-task",
+        agent_id="geospatial_data_retrieval_agent",
+        agent_name="Geospatial Data Retrieval Agent",
+        agent_version="1.0.0",
+        state="TASK_STATE_COMPLETED",
+        query="Download the CA counties and PA counties, save to two geojson files",
+        requested_skill=None,
+        result={
+            "outputs": {
+                "text": "Downloaded county boundaries for California and Pennsylvania.",
+                "output_files": [str(ca_path), str(pa_path)],
+            },
+            "metrics": {"number_of_artifacts": 2},
+        },
+        error_message=None,
+        agent_id_for_artifacts="geospatial_data_retrieval_agent",
+        output_delivery="url",
+        public_base_url="http://testserver",
+    )
+
+    artifacts = payload["outputs"]["artifacts"]
+    names_by_original = {artifact["original_filename"]: artifact["name"] for artifact in artifacts}
+
+    assert names_by_original["california_counties.geojson"] == "California Counties GeoJSON"
+    assert names_by_original["pennsylvania_counties.geojson"] == "Pennsylvania Counties GeoJSON"
 
 
 def test_agent_capability_documents_do_not_contain_unconfigured_machine_paths_or_hosts():

@@ -36,10 +36,17 @@ export interface WebMappingAppArtifact {
 }
 
 export interface TaskArtifact {
-  name: string;
-  format: string;
+  name?: string;
+  filename?: string;
+  original_filename?: string;
+  label?: string;
+  role?: string;
+  format?: string;
+  mime_type?: string;
+  type?: string;
   url: string;
   description?: string;
+  size_bytes?: number;
 }
 
 export interface TaskResult {
@@ -87,8 +94,10 @@ export interface AgentNode {
   };
   excludedInputs?: string[];
   serverUrl?: string;
-  status: "idle" | "running" | "completed" | "error";
+  status: "idle" | "waiting" | "running" | "completed" | "error" | "canceled";
   logs: string[];
+  currentTaskId?: string;
+  lastRequest?: any;
   results?: TaskResult;
 }
 

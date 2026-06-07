@@ -1,7 +1,130 @@
 import express from "express";
+import fs from "fs";
+import os from "os";
 import path from "path";
+import { createRequire } from "module";
 import { createServer as createViteServer } from "vite";
 import { GasClient } from "@gibd/gas-client";
+
+const require = createRequire(path.join(process.cwd(), "server.ts"));
+const Database = require("better-sqlite3");
+const wkx = require("wkx");
+
+const GPKG_PREVIEW_FEATURE_LIMIT = 5000;
+
+function quoteSqlIdentifier(identifier: string) {
+  return `"${identifier.replace(/"/g, '""')}"`;
+}
+
+function normalizeGpkgValue(value: unknown) {
+  if (Buffer.isBuffer(value)) return "[binary]";
+  if (typeof value === "bigint") return Number(value);
+  return value;
+}
+
+function extractGpkgWkb(geometryValue: Buffer) {
+  if (geometryValue.length <= 8 || geometryValue[0] !== 0x47 || geometryValue[1] !== 0x50) {
+    return geometryValue;
+  }
+
+  const flags = geometryValue[3];
+  const envelopeIndicator = (flags & 0x0e) >> 1;
+  const envelopeByteLengths: Record<number, number> = {
+    0: 0,
+    1: 32,
+    2: 48,
+    3: 48,
+    4: 64
+  };
+  const headerLength = 8 + (envelopeByteLengths[envelopeIndicator] || 0);
+  return geometryValue.subarray(headerLength);
+}
+
+function parseGpkgGeometry(geometryValue: unknown) {
+  if (!Buffer.isBuffer(geometryValue)) return null;
+
+  const wkb = extractGpkgWkb(geometryValue);
+  if (!wkb.length) return null;
+
+  try {
+    return wkx.Geometry.parse(wkb).toGeoJSON();
+  } catch (err) {
+    console.warn("Unable to parse GeoPackage geometry:", err);
+    return null;
+  }
+}
+
+function parseGpkgFile(filePath: string) {
+  const db = new Database(filePath, { readonly: true, fileMustExist: true });
+
+  try {
+    const tables = db
+      .prepare("SELECT table_name FROM gpkg_contents WHERE data_type = 'features'")
+      .all()
+      .map((row: any) => String(row.table_name));
+
+    const features: any[] = [];
+    const tableSummaries: any[] = [];
+
+    for (const tableName of tables) {
+      const geometryRow = db
+        .prepare("SELECT column_name FROM gpkg_geometry_columns WHERE table_name = ?")
+        .get(tableName) as { column_name?: string } | undefined;
+
+      if (!geometryRow?.column_name) continue;
+
+      const geometryColumn = geometryRow.column_name;
+      const columns = db
+        .prepare(`PRAGMA table_info(${quoteSqlIdentifier(tableName)})`)
+        .all()
+        .map((row: any) => String(row.name));
+
+      const remaining = GPKG_PREVIEW_FEATURE_LIMIT - features.length;
+      if (remaining <= 0) break;
+
+      const rows = db
+        .prepare(`SELECT * FROM ${quoteSqlIdentifier(tableName)} LIMIT ?`)
+        .all(remaining);
+
+      for (const row of rows as Record<string, unknown>[]) {
+        const properties: Record<string, unknown> = {};
+
+        for (const column of columns) {
+          if (column !== geometryColumn) {
+            properties[column] = normalizeGpkgValue(row[column]);
+          }
+        }
+
+        features.push({
+          type: "Feature",
+          geometry: parseGpkgGeometry(row[geometryColumn]),
+          properties: {
+            ...properties,
+            _gpkg_table: tableName
+          }
+        });
+      }
+
+      tableSummaries.push({
+        table: tableName,
+        geometryColumn,
+        previewedFeatures: rows.length
+      });
+    }
+
+    return {
+      type: "FeatureCollection",
+      features,
+      metadata: {
+        tables: tableSummaries,
+        featureLimit: GPKG_PREVIEW_FEATURE_LIMIT,
+        truncated: features.length >= GPKG_PREVIEW_FEATURE_LIMIT
+      }
+    };
+  } finally {
+    db.close();
+  }
+}
 
 async function startServer() {
   const app = express();
@@ -98,46 +221,60 @@ async function startServer() {
         res.flushHeaders(); // Ensure headers are flushed immediately
 
         console.log(`Starting stream for agent ${agentId}: "${instructions}"`);
-        
+
         try {
           const url = `${client.serverUrl}/agents/${agentId}/tasks`;
           const body = client.buildExecuteTaskRequest(instructions, requestOptions);
-          
-          const response = await fetch(url, {
-              method: 'POST',
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify(body),
-              signal: AbortSignal.timeout(requestOptions.timeout || client.timeout || 300000)
-          });
+          const upstreamController = new AbortController();
+          const timeoutId = setTimeout(
+            () => upstreamController.abort(),
+            requestOptions.timeout || client.timeout || 300000
+          );
+          try {
+            res.on("close", () => {
+              if (!res.writableEnded) {
+                upstreamController.abort();
+              }
+            });
 
-          if (!response.ok) {
-             const errTxt = await response.text();
-             throw new Error(`Upstream returned ${response.status}: ${errTxt}`);
-          }
+            const response = await fetch(url, {
+                method: 'POST',
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify(body),
+                signal: upstreamController.signal
+            });
 
-          if (response.body) {
-             const decoder = new TextDecoder();
-             let buffer = "";
-             // @ts-ignore
-             for await (const chunk of response.body) {
-                 buffer += decoder.decode(chunk, { stream: true });
-                 const lines = buffer.split("\n");
-                 buffer = lines.pop() || "";
+            if (!response.ok) {
+               const errTxt = await response.text();
+               throw new Error(`Upstream returned ${response.status}: ${errTxt}`);
+            }
 
-                 for (let line of lines) {
-                     line = line.trim();
-                     if (line) {
-                         // Fix invalid JSON values like NaN
-                         const sanitizedLine = line.replace(/:\s*NaN/g, ': null').replace(/\[\s*NaN/g, '[null').replace(/,\s*NaN/g, ', null');
-                         try {
-                             const event = JSON.parse(sanitizedLine);
-                             res.write(`data: ${JSON.stringify(event)}\n\n`);
-                         } catch (e) {
-                             console.warn("Skipping invalid JSON from upstream:", sanitizedLine);
-                         }
-                     }
-                 }
-             }
+            if (response.body) {
+               const decoder = new TextDecoder();
+               let buffer = "";
+               // @ts-ignore
+               for await (const chunk of response.body) {
+                   buffer += decoder.decode(chunk, { stream: true });
+                   const lines = buffer.split("\n");
+                   buffer = lines.pop() || "";
+
+                   for (let line of lines) {
+                       line = line.trim();
+                       if (line) {
+                           // Fix invalid JSON values like NaN
+                           const sanitizedLine = line.replace(/:\s*NaN/g, ': null').replace(/\[\s*NaN/g, '[null').replace(/,\s*NaN/g, ', null');
+                           try {
+                               const event = JSON.parse(sanitizedLine);
+                               res.write(`data: ${JSON.stringify(event)}\n\n`);
+                           } catch (e) {
+                               console.warn("Skipping invalid JSON from upstream:", sanitizedLine);
+                           }
+                       }
+                   }
+               }
+            }
+          } finally {
+            clearTimeout(timeoutId);
           }
           res.write(`data: ${JSON.stringify({ event: "stream_done", payload: { success: true } })}\n\n`);
           res.end();
@@ -151,6 +288,16 @@ async function startServer() {
         res.json(result);
       }
     } catch (err: any) {
+      if (err?.name === "AbortError") {
+        console.log(`Execution stream aborted for agent ${agentId}.`);
+        if (!res.headersSent) {
+          res.status(499).json({ error: `Execution stream aborted for agent ${agentId}` });
+        } else if (!res.writableEnded) {
+          res.end();
+        }
+        return;
+      }
+
       console.error(`Error executing task on agent ${agentId}:`, err);
       if (!res.headersSent) {
         res.status(500).json({ error: `Execution error on agent ${agentId}`, details: err.message });
@@ -161,6 +308,70 @@ async function startServer() {
     }
   });
 
+  app.post("/api/gas/cancel-task", async (req, res) => {
+    const { agentId, taskId, serverUrl } = req.body;
+
+    if (!agentId || !taskId) {
+      res.status(400).json({ error: "agentId and taskId are required parameters." });
+      return;
+    }
+
+    try {
+      const client = getGasClient(serverUrl);
+      const cancelUrl = `${client.serverUrl}/agents/${encodeURIComponent(agentId)}/tasks/${encodeURIComponent(taskId)}/cancel`;
+      const cancelResponse = await fetch(cancelUrl, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        signal: AbortSignal.timeout(client.timeout || 300000)
+      });
+
+      const text = await cancelResponse.text();
+      let result: any = {};
+      try {
+        result = text ? JSON.parse(text) : {};
+      } catch {
+        result = { message: text };
+      }
+
+      if (!cancelResponse.ok) {
+        const detail = result?.details || result?.message || result?.error || text || `HTTP ${cancelResponse.status}`;
+        throw new Error(detail);
+      }
+
+      res.json(result);
+    } catch (err: any) {
+      console.error(`Error canceling task ${taskId} on agent ${agentId}:`, err);
+      res.status(500).json({ error: `Cancel error on agent ${agentId}`, details: err.message });
+    }
+  });
+
+  // Fetch remote artifacts through the local app so previews can avoid iframe/CORS header issues.
+  app.get("/api/fetch-artifact", async (req, res) => {
+    const url = req.query.url as string;
+    if (!url) {
+      res.status(400).send("url is required");
+      return;
+    }
+
+    try {
+      const response = await fetch(url, {
+        signal: AbortSignal.timeout(60000)
+      });
+
+      if (!response.ok) {
+        throw new Error(`Failed to fetch artifact: HTTP ${response.status}`);
+      }
+
+      const contentType = response.headers.get("content-type") || "text/html; charset=utf-8";
+      const text = await response.text();
+      res.type(contentType);
+      res.send(text);
+    } catch (err: any) {
+      console.error("Failed to fetch artifact preview:", err);
+      res.status(500).send(err.message || "Failed to fetch artifact");
+    }
+  });
+
   // Proxy parse GPKG
   app.get("/api/parse-gpkg", async (req, res) => {
     const url = req.query.url as string;
@@ -168,33 +379,37 @@ async function startServer() {
       res.status(400).json({ error: "url is required" });
       return;
     }
-    
+
+    let tempFilePath = "";
+
     try {
-      const { GeoPackageAPI } = await import('@ngageoint/geopackage');
-      
-      const resp = await fetch(url);
-      if (!resp.ok) throw new Error("Failed to fetch gpkg file");
-      
-      const arrayBuffer = await resp.arrayBuffer();
-      const uint8Array = new Uint8Array(arrayBuffer);
-      
-      const geoPackage = await GeoPackageAPI.open(uint8Array);
-      const featureTables = geoPackage.getFeatureTables();
-      
-      const geojsonData = { type: 'FeatureCollection', features: [] as any[] };
-      
-      for (const table of featureTables) {
-        const iterator = geoPackage.iterateGeoJSONFeatures(table);
-        for (const feature of iterator) {
-          geojsonData.features.push(feature);
-        }
+      const response = await fetch(url, {
+        signal: AbortSignal.timeout(60000)
+      });
+
+      if (!response.ok) {
+        throw new Error(`Failed to fetch GPKG file: HTTP ${response.status}`);
       }
-      
-      geoPackage.close();
-      res.json(geojsonData);
+
+      const arrayBuffer = await response.arrayBuffer();
+      tempFilePath = path.join(
+        os.tmpdir(),
+        `gas-canvas-preview-${Date.now()}-${Math.random().toString(16).slice(2)}.gpkg`
+      );
+      fs.writeFileSync(tempFilePath, Buffer.from(arrayBuffer));
+
+      res.json(parseGpkgFile(tempFilePath));
     } catch (err: any) {
-      console.error("GPKG parse error:", err);
-      res.status(500).json({ error: "Failed to parse GPKG", details: err.message });
+      console.error("Failed to parse GPKG preview:", err);
+      res.status(500).json({
+        error: "Failed to parse GPKG",
+        details: err.message,
+        url
+      });
+    } finally {
+      if (tempFilePath) {
+        fs.rmSync(tempFilePath, { force: true });
+      }
     }
   });
 

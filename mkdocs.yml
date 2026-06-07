@@ -21,6 +21,7 @@ nav:
   - Home: index.md
   - Getting Started:
       - Use GAS Services: gas_client_sdk.md
+      - Use GAS Canvas: gas_canvas.md
       - Add an Agent Service: adding_an_agent_service.md
       - Host a GAS Server: development_and_deployment_environment.md
       - Improve the Codebase: contributing.md

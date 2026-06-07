@@ -4,7 +4,7 @@
     "agent_id": "pasda_agent",
     "name": "PASDA Discovery Agent",
     "description": "This agent serves as an expert gateway to the Pennsylvania Spatial Data Access (PASDA) repository. It translates broad user requests into precise PASDA ArcGIS REST service/layer selections, using high-confidence deterministic shortcuts for common statewide layers and model-assisted discovery when no shortcut applies. It retrieves and packages the selected data into GeoPackage by default or GeoJSON when explicitly requested.",
-    "version": "1.0.0",
+    "version": "1.1.0",
     "base_url": "https://www.geospatial-agentic-services.online/agents/pasda_agent",
     "last_updated": "2026-04-28",
     "provider": {

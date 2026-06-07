@@ -17,6 +17,7 @@ COMMON_PROGRESS_STAGES = (
     "start",
     "input_inspection",
     "data_validation",
+    "validation",
     "method_selection",
     "planning",
     "llm_generation",
@@ -47,6 +48,8 @@ DOMAIN_PROGRESS_STAGES = (
     "model_execution",
     "diagnostics_generation",
     "report_generation",
+    "export_started",
+    "export_wait",
 )
 
 RECOMMENDED_PROGRESS_STAGES = COMMON_PROGRESS_STAGES + DOMAIN_PROGRESS_STAGES

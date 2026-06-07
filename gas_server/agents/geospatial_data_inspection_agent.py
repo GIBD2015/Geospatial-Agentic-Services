@@ -43,7 +43,7 @@ class GeospatialDataInspectionAgent(GeoAgent):
             output_dir=DATA_DIR / self.agent_id,
         )
         self.service_name = format_service_name(self.agent_name)
-        self.client = build_llm_client(service_name=self.service_name, openai_api_key=self.api_key)
+        self.client = build_llm_client(service_name=self.service_name, openai_api_key=api_key)
         self.available_libraries = self._available_libraries()
 
     def _available_libraries(self) -> list[str]:

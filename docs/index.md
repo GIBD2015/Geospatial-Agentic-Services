@@ -18,10 +18,11 @@ agentic systems should be built. Instead, it focuses on the shared service
 contracts needed when different geospatial agents, applications, notebooks, and
 AI orchestrators need to work together.
 
-This repository provides reference implementations for GAS server, interface schemas, GAS client SDK, GAS registry, developer documentations, and some example agents and notebooks. The public
+This repository provides reference implementations for the GAS server,
+interface schemas, Python and JavaScript client SDKs, GAS registry, developer
+documentation, and example agents and notebooks. The public
 [GAS Registry](http://geospatial-agentic-services.online/registry) catalogs
-registers GAS services by reading their `GetCapabilities` and `DescribeAgent`
-documents.
+GAS services by reading their `GetCapabilities` and `DescribeAgent` documents.
 
 For the broader conceptual framework, see the
 [GAS paper](https://www.researchgate.net/publication/404738967_Geospatial_Agentic_Services_A_Framework_for_Interoperable_Geospatial_Intelligence).
@@ -39,6 +40,7 @@ Start here if you want to discover and call existing GAS services from
 notebooks, applications, GIS workflows, or AI orchestrators.
 
 - [Use GAS Services](gas_client_sdk.md)
+- [Use GAS Canvas](gas_canvas.md)
 - [GAS Interfaces](gas_interfaces.md)
 - [GAS Registry](gas_registry.md)
 - [Included Agents](included_agents.md)
@@ -66,7 +68,7 @@ Start here if you want to operate a public or private GAS server.
 ### Improve the Codebase
 
 Start here if you want to contribute to the GAS server framework, registry,
-client SDK, schemas, examples, tests, or documentation.
+client SDKs, schemas, examples, tests, or documentation.
 
 - [Contributing](contributing.md)
 - [Server Architecture](gas_server_architecture.md)
@@ -89,7 +91,8 @@ client SDK, schemas, examples, tests, or documentation.
 - [GAS GitHub repository](https://github.com/GIBD2015/geospatial-agentic-services)
 - [GAS Registry](http://geospatial-agentic-services.online/registry)
 - [GAS paper](https://www.researchgate.net/publication/404738967_Geospatial_Agentic_Services_A_Framework_for_Interoperable_Geospatial_Intelligence)
-- [GAS Client on PyPI](https://pypi.org/project/gas-client/)
+- [Python GAS Client on PyPI](https://pypi.org/project/gas-client/)
+- [JavaScript GAS Client on npm](https://www.npmjs.com/package/@gibd/gas-client)
 
 ## Examples
 

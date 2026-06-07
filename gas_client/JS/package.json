@@ -1,7 +1,7 @@
 {
   "name": "@gibd/gas-client",
   "version": "1.0.4",
-  "description": "JavaScript client for Geospatial Agentic Services (GAS)",
+  "description": "A JavaScript Client SDK for Geospatial Agentic Services (GAS)",
   "type": "module",
   "main": "./src/index.js",
   "exports": {

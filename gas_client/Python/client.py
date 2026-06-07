@@ -272,14 +272,16 @@ class GasClient:
             if not isinstance(artifact, Mapping):
                 continue
             spatial_metadata = artifact.get("spatial_metadata") if isinstance(artifact.get("spatial_metadata"), Mapping) else {}
-            name = artifact.get("filename") or artifact.get("name") or f"artifact_{index}"
+            semantic_name = artifact.get("name")
+            filename = artifact.get("filename")
             role = artifact.get("role")
             label = artifact.get("label") or role
             original_filename = artifact.get("original_filename")
+            description = artifact.get("description")
             artifact_type = artifact.get("type") or spatial_metadata.get("type")
             artifact_format = artifact.get("format") or artifact.get("mime_type")
             size_bytes = artifact.get("size_bytes")
-            display_name = f"{label} ({name})" if label else name
+            display_name = semantic_name or label or filename or f"artifact_{index}"
             print(f"  {index}. {display_name}")
             print(
                 "     "
@@ -289,8 +291,12 @@ class GasClient:
             )
             if role:
                 print(f"     role={role}")
+            if filename:
+                print(f"     filename={filename}")
             if original_filename:
                 print(f"     original={original_filename}")
+            if description:
+                print(f"     description={description}")
             if artifact.get("url"):
                 print(f"     url={artifact['url']}")
 
@@ -381,10 +387,9 @@ class GasClient:
         for index, artifact in enumerate(artifact_items, start=1):
             if not isinstance(artifact, Mapping):
                 continue
-            name = artifact.get("filename") or artifact.get("name") or f"artifact_{index}"
-            label = artifact.get("label") or artifact.get("role") or name
-            print(f"{index}. {label}")
-            for key in ("role", "format", "type", "name", "original_filename", "size_bytes", "url"):
+            name = artifact.get("name") or artifact.get("label") or artifact.get("filename") or f"artifact_{index}"
+            print(f"{index}. {name}")
+            for key in ("role", "format", "description", "filename", "original_filename", "type", "size_bytes", "url"):
                 value = artifact.get(key)
                 if value not in (None, "", [], {}):
                     print(f"   {key:<17}: {value}")
@@ -433,7 +438,7 @@ class GasClient:
             display_url = self._absolute_url(url)
             filename = self._artifact_filename(artifact)
             kind = self._artifact_visual_kind(artifact)
-            label = artifact.get("label") or artifact.get("role") or filename or "artifact"
+            label = artifact.get("name") or artifact.get("label") or artifact.get("role") or filename or "artifact"
             safe_label = html.escape(str(label))
             safe_url = html.escape(display_url, quote=True)
 

@@ -437,6 +437,372 @@ def _artifact_role_from_key(value: str) -> str:
     return normalized or "output"
 
 
+def _title_from_identifier(value: Any) -> str:
+    text = re.sub(r"[_\-\s]+", " ", str(value or "")).strip()
+    return text.title() if text else ""
+
+
+def _artifact_format_label(file_format: str | None) -> str:
+    normalized = (file_format or "").lower()
+    labels = {
+        "geojson": "GeoJSON",
+        "gpkg": "GeoPackage",
+        "shp": "Shapefile",
+        "csv": "CSV",
+        "tsv": "TSV",
+        "json": "JSON",
+        "html": "HTML",
+        "htm": "HTML",
+        "txt": "Text",
+        "md": "Markdown",
+        "png": "PNG",
+        "jpg": "JPEG",
+        "jpeg": "JPEG",
+        "tif": "GeoTIFF",
+        "tiff": "GeoTIFF",
+    }
+    return labels.get(normalized, normalized.upper() if normalized else "File")
+
+
+def _clean_artifact_stem(filename: Any) -> str:
+    stem = Path(str(filename or "")).stem
+    stem = re.sub(r"(?i)^(?:[a-z0-9]+_)*agent[-_]\d+[-_a-z0-9]*$", "", stem)
+    stem = re.sub(r"(?i)^[a-z0-9_]*agent[-_][a-z0-9]{4,}[-_][a-z0-9]{4,}[-_]\d+$", "", stem)
+    stem = re.sub(r"\b[0-9a-f]{8,}(?:-[0-9a-f]{4,}){0,}\b", " ", stem, flags=re.I)
+    stem = re.sub(r"\b\d{4,}\b", " ", stem)
+    stem = re.sub(r"[_\-\s]+", " ", stem).strip()
+    low_value = {
+        "artifact",
+        "output",
+        "dataset",
+        "file",
+        "report",
+        "result",
+        "data",
+    }
+    if not stem or stem.lower() in low_value:
+        return ""
+    weak_tokens = {
+        "find",
+        "out",
+        "how",
+        "many",
+        "return",
+        "download",
+        "create",
+        "generate",
+        "calculate",
+        "analyze",
+        "analysis",
+        "result",
+        "results",
+        "final",
+    }
+    tokens = [token.lower() for token in stem.split()]
+    if tokens and all(token in weak_tokens for token in tokens):
+        return ""
+    if tokens and tokens[0] in weak_tokens:
+        return ""
+    if len(tokens) <= 3 and any(token in weak_tokens for token in tokens):
+        return ""
+    return _title_from_identifier(stem)
+
+
+def _artifact_context_text(result: Dict[str, Any] | None, query: str | None = None) -> str:
+    parts: List[str] = []
+    if query:
+        parts.append(str(query))
+    if isinstance(result, dict):
+        outputs = result.get("outputs") if isinstance(result.get("outputs"), dict) else {}
+        for value in (
+            outputs.get("summary"),
+            outputs.get("text"),
+            result.get("summary"),
+            result.get("text"),
+        ):
+            if isinstance(value, str):
+                parts.append(value)
+    return " ".join(part.strip() for part in parts if part and str(part).strip())
+
+
+def _state_prefix_from_text(text: str) -> str:
+    lowered = re.sub(r"[_\-]+", " ", text.lower())
+    matches = []
+    for label, pattern in (
+        ("Pennsylvania", r"\bpa\b|\bpennsylvania\b"),
+        ("California", r"\bca\b|\bcalifornia\b"),
+        ("New York", r"\bny\b|\bnew york\b"),
+        ("US", r"\bus\b|\bu\.s\.\b|\bunited states\b|\bnational\b"),
+    ):
+        if re.search(pattern, lowered):
+            matches.append(label)
+    if len(matches) == 1:
+        return matches[0]
+    return ""
+
+
+def _artifact_subject_text(payload: Dict[str, Any], context_text: str = "") -> str:
+    parts: List[str] = []
+    generic_labels = {"dataset", "output", "file", "artifact"}
+    has_original_filename = bool(payload.get("_original_filename"))
+    for key in ("_artifact_name", "display_name", "_artifact_label", "_original_filename", "filename"):
+        if key == "filename" and has_original_filename:
+            continue
+        value = payload.get(key)
+        if not isinstance(value, str) or not value.strip():
+            continue
+        if key in {"_artifact_name", "display_name", "_artifact_label"}:
+            if value.strip().lower() not in generic_labels:
+                parts.append(value)
+            continue
+
+        stem = Path(value).stem
+        cleaned_stem = _clean_artifact_stem(value)
+        stem_has_known_subject = bool(
+            _state_prefix_from_text(stem)
+            or re.search(r"\b(count(?:y|ies)|hospital|tract|earthquake|obesity|cdc|ndvi)\b", re.sub(r"[_\-]+", " ", stem), re.I)
+        )
+        if stem_has_known_subject:
+            parts.append(stem)
+        elif cleaned_stem:
+            parts.append(cleaned_stem)
+
+    artifact_text = " ".join(parts)
+    if artifact_text:
+        artifact_state = _state_prefix_from_text(artifact_text)
+        if artifact_state and re.search(r"\bcount(?:y|ies)\b", context_text, re.I) and not re.search(r"\bcount(?:y|ies)\b", artifact_text, re.I):
+            artifact_text = f"{artifact_text} counties"
+        if artifact_state and re.search(r"\bhospital", context_text, re.I) and not re.search(r"\bhospital", artifact_text, re.I):
+            artifact_text = f"{artifact_text} hospitals"
+        if artifact_state and re.search(r"\btract", context_text, re.I) and not re.search(r"\btract", artifact_text, re.I):
+            artifact_text = f"{artifact_text} tracts"
+        return artifact_text
+    return ""
+
+
+def _semantic_subject_from_context(
+    text: str,
+    *,
+    role: str = "",
+    file_format: str | None = None,
+) -> str:
+    lowered = text.lower()
+    state_prefix = _state_prefix_from_text(text)
+    normalized_role = role.lower()
+    normalized_format = (file_format or "").lower()
+
+    if re.search(r"\bearthquake", lowered) and re.search(r"\b(count|counts|how many)\b", lowered) and re.search(r"\bcount(?:y|ies)\b", lowered):
+        if "map" in normalized_role or normalized_format in {"png", "jpg", "jpeg", "html", "htm"} or "choropleth" in lowered:
+            return "Earthquake Count Choropleth Map"
+        return "Earthquake Count by County"
+    if re.search(r"\bearthquake", lowered):
+        prefix = f"{state_prefix} " if state_prefix else ""
+        return f"{prefix}Earthquakes".strip()
+    if re.search(r"\bhospital", lowered):
+        prefix = f"{state_prefix} " if state_prefix else ""
+        return f"{prefix}Hospitals".strip()
+    if re.search(r"\btract", lowered):
+        prefix = f"{state_prefix} " if state_prefix else ""
+        return f"{prefix}Census Tracts".strip()
+    if re.search(r"\bcount(?:y|ies)\b", lowered):
+        prefix = f"{state_prefix} " if state_prefix else ""
+        return f"{prefix}Counties".strip()
+    if re.search(r"\bobesity\b|\bcdc\b", lowered):
+        return "CDC Obesity Data"
+
+    cleaned = re.sub(r"\b(return|as|in)\s+(geojson|geopackage|gpkg|csv|html|png|json|txt)\b", " ", lowered)
+    cleaned = re.sub(r"\b(download|create|generate|find out|find|calculate|analyze|perform|return|show|map)\b", " ", cleaned)
+    cleaned = re.sub(r"[^a-z0-9\s]+", " ", cleaned)
+    stopwords = {
+        "a",
+        "an",
+        "and",
+        "for",
+        "from",
+        "in",
+        "of",
+        "on",
+        "the",
+        "to",
+        "with",
+        "each",
+        "latest",
+        "last",
+        "days",
+    }
+    tokens = [token for token in cleaned.split() if len(token) > 1 and token not in stopwords and not token.isdigit()]
+    if tokens:
+        return _title_from_identifier(" ".join(tokens[:8]))
+    return ""
+
+
+def _semantic_artifact_role(
+    payload: Dict[str, Any],
+    inspection: Dict[str, Any],
+    file_format: str | None,
+) -> str:
+    existing = str(payload.get("_artifact_role") or "").strip().lower()
+    if existing:
+        return existing
+
+    spatial_metadata = inspection.get("spatial_metadata") if isinstance(inspection, dict) else {}
+    artifact_type = spatial_metadata.get("type") if isinstance(spatial_metadata, dict) else None
+    normalized_format = (file_format or "").lower()
+
+    if artifact_type == "vector":
+        return "vector_layer"
+    if artifact_type == "raster":
+        return "raster_layer"
+    if artifact_type == "table" or normalized_format in {"csv", "tsv"}:
+        return "table"
+    if normalized_format in {"html", "htm"}:
+        return "html_report"
+    if normalized_format in {"txt", "md"}:
+        return "text_report"
+    if normalized_format in {"png", "jpg", "jpeg", "gif", "svg"}:
+        return "visualization"
+    if normalized_format == "json":
+        return "json_output"
+    return "output"
+
+
+def _semantic_artifact_name(
+    payload: Dict[str, Any],
+    inspection: Dict[str, Any],
+    role: str,
+    file_format: str | None,
+    index: int,
+    *,
+    context_text: str = "",
+) -> str:
+    explicit = payload.get("_artifact_name") or payload.get("display_name")
+    if explicit:
+        return str(explicit).strip()
+
+    explicit_label = str(payload.get("_artifact_label") or "").strip()
+    original_name = payload.get("_original_filename") or payload.get("filename")
+    meaningful_stem = _clean_artifact_stem(original_name)
+    format_label = _artifact_format_label(file_format)
+    role_label = _title_from_identifier(role)
+    spatial_metadata = inspection.get("spatial_metadata") if isinstance(inspection, dict) else {}
+    normalized_role = role.lower()
+
+    if "html" in normalized_role and "report" in normalized_role:
+        return "HTML Report"
+    if ("text" in normalized_role or "txt" in normalized_role) and "report" in normalized_role:
+        return "Text Report"
+
+    if explicit_label and explicit_label.lower() not in {"dataset", "output", "file", "artifact"}:
+        label_has_format = format_label.lower() in explicit_label.lower()
+        return explicit_label if label_has_format else f"{explicit_label} {format_label}".strip()
+
+    artifact_subject = _semantic_subject_from_context(
+        _artifact_subject_text(payload, context_text),
+        role=role,
+        file_format=file_format,
+    )
+    if artifact_subject:
+        return f"{artifact_subject} {format_label}".strip()
+
+    context_subject = _semantic_subject_from_context(context_text, role=role, file_format=file_format)
+    if context_subject:
+        return f"{context_subject} {format_label}".strip()
+
+    if meaningful_stem:
+        return f"{meaningful_stem} {format_label}".strip()
+
+    if isinstance(spatial_metadata, dict):
+        geometry_type = spatial_metadata.get("geometry_type")
+        if isinstance(geometry_type, list):
+            geometry_type = ", ".join(str(item) for item in geometry_type)
+        artifact_type = spatial_metadata.get("type")
+        if artifact_type == "vector":
+            detail = f"{geometry_type} " if geometry_type else ""
+            return f"{detail}{format_label} Vector Layer {index}".strip()
+        if artifact_type == "raster":
+            return f"{format_label} Raster Layer {index}".strip()
+        if artifact_type == "table":
+            return f"{format_label} Table {index}".strip()
+
+    if role in {"html_report", "text_report"}:
+        return f"{format_label} Report"
+    if role == "visualization" or (file_format or "").lower() in {"png", "jpg", "jpeg", "gif", "svg"}:
+        return f"{format_label} Visualization {index}"
+    return f"{role_label} {format_label} {index}".strip()
+
+
+def _semantic_artifact_description(
+    payload: Dict[str, Any],
+    inspection: Dict[str, Any],
+    role: str,
+    file_format: str | None,
+    *,
+    context_text: str = "",
+    artifact_name: str = "",
+) -> str:
+    explicit = payload.get("_artifact_description") or payload.get("description")
+    if explicit:
+        return str(explicit).strip()
+
+    format_label = _artifact_format_label(file_format)
+    artifact_subject = _semantic_subject_from_context(
+        _artifact_subject_text(payload, context_text),
+        role=role,
+        file_format=file_format,
+    )
+    context_subject = artifact_subject or _semantic_subject_from_context(context_text, role=role, file_format=file_format)
+    subject = context_subject or artifact_name
+    spatial_metadata = inspection.get("spatial_metadata") if isinstance(inspection, dict) else {}
+    if isinstance(spatial_metadata, dict):
+        artifact_type = spatial_metadata.get("type")
+        feature_count = spatial_metadata.get("feature_count")
+        geometry_type = spatial_metadata.get("geometry_type")
+        if isinstance(geometry_type, list):
+            geometry_type = ", ".join(str(item) for item in geometry_type)
+        if artifact_type == "vector":
+            count_text = f" with {feature_count} feature(s)" if feature_count is not None else ""
+            geometry_text = f" {geometry_type}" if geometry_type else ""
+            subject_text = f" representing {subject}" if subject else ""
+            return f"{format_label} vector layer{subject_text}{geometry_text}{count_text}; use it as a map layer or spatial analysis input."
+        if artifact_type == "raster":
+            raster = spatial_metadata.get("raster") if isinstance(spatial_metadata.get("raster"), dict) else {}
+            dimensions = (
+                f" with dimensions {raster.get('width')} x {raster.get('height')}"
+                if raster.get("width") and raster.get("height")
+                else ""
+            )
+            subject_text = f" representing {subject}" if subject else ""
+            return f"{format_label} raster layer{subject_text}{dimensions}; use it for raster analysis or map display."
+        if artifact_type == "table":
+            subject_text = f" for {subject}" if subject else ""
+            return f"{format_label} table artifact{subject_text}; use it for tabular joins, summaries, or downstream analysis."
+
+    descriptions = {
+        "html_report": "Interactive or browser-readable HTML artifact for viewing the generated report or web map.",
+        "text_report": "Plain text report summarizing the agent result, methods, and diagnostics.",
+        "visualization": "Image visualization artifact for inspection, reporting, or map/chart review.",
+        "json_output": "Structured JSON artifact for programmatic reuse by clients or downstream agents.",
+    }
+    normalized_role = role.lower()
+    if "html" in normalized_role and "report" in normalized_role:
+        return descriptions["html_report"]
+    if ("text" in normalized_role or "txt" in normalized_role) and "report" in normalized_role:
+        return descriptions["text_report"]
+    if (file_format or "").lower() in {"png", "jpg", "jpeg", "gif", "svg"}:
+        return descriptions["visualization"]
+    return descriptions.get(role, f"{format_label} output artifact produced by the agent.")
+
+
+def _dedupe_artifact_names(artifacts: List[Dict[str, Any]]) -> None:
+    seen: Dict[str, int] = {}
+    for artifact in artifacts:
+        base = str(artifact.get("name") or "Artifact").strip() or "Artifact"
+        count = seen.get(base, 0) + 1
+        seen[base] = count
+        if count > 1:
+            artifact["name"] = f"{base} {count}"
+
+
 def _gas_status_for_state(state: str) -> str:
     return STATE_TO_STATUS.get(state, state.lower())
 
@@ -1207,10 +1573,11 @@ def _collect_file_payloads(value: Any) -> List[Dict[str, Any]]:
     return artifacts
 
 
-def _normalize_artifacts(result: Dict[str, Any] | None) -> List[Dict[str, Any]]:
+def _normalize_artifacts(result: Dict[str, Any] | None, *, query: str | None = None) -> List[Dict[str, Any]]:
     if not isinstance(result, dict):
         return []
 
+    context_text = _artifact_context_text(result, query)
     normalized: List[Dict[str, Any]] = []
     seen: set[Tuple[Any, Any, Any]] = set()
     for index, payload in enumerate(_collect_file_payloads(result), start=1):
@@ -1218,22 +1585,44 @@ def _normalize_artifacts(result: Dict[str, Any] | None) -> List[Dict[str, Any]]:
         if key in seen:
             continue
         seen.add(key)
+        inspection = inspect_artifact(payload.get("_local_path"))
+        file_format = payload.get("format") or "file"
+        role = _semantic_artifact_role(payload, inspection, file_format)
+        filename = payload.get("filename")
+        artifact_name = _semantic_artifact_name(
+            payload,
+            inspection,
+            role,
+            file_format,
+            index,
+            context_text=context_text,
+        )
         normalized.append(
             {
-                "name": payload.get("filename") or f"artifact_{index}",
-                "role": payload.get("_artifact_role"),
+                "name": artifact_name,
+                "role": role,
+                "format": file_format,
+                "description": _semantic_artifact_description(
+                    payload,
+                    inspection,
+                    role,
+                    file_format,
+                    context_text=context_text,
+                    artifact_name=artifact_name,
+                ),
+                "filename": filename,
                 "label": payload.get("_artifact_label"),
                 "original_filename": payload.get("_original_filename"),
                 "type": payload.get("kind"),
-                "format": payload.get("format"),
                 "mime_type": payload.get("mime_type"),
                 "size_bytes": payload.get("size_bytes"),
                 "url": payload.get("url"),
                 "encoding": payload.get("encoding"),
                 "data": payload.get("data"),
-                **inspect_artifact(payload.get("_local_path")),
+                **inspection,
             }
         )
+    _dedupe_artifact_names(normalized)
     return normalized
 
 
@@ -1567,7 +1956,7 @@ def _normalize_agent_result(
     complementary_inputs = _nested_get(complementary, ("Execution", "Inputs"), {})
     complementary_provenance = _nested_get(complementary, ("Provenance",), {})
     environment = result.get("environment") if isinstance(result.get("environment"), dict) else {}
-    normalized_artifacts = _normalize_artifacts(result)
+    normalized_artifacts = _normalize_artifacts(result, query=query)
     data_summary = _summarize_artifact_metadata(
         normalized_artifacts,
         _first_non_empty(outputs.get("dataset_size"), result.get("dataset_size"), {}),

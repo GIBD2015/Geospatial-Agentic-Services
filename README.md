@@ -5,7 +5,8 @@
 <p>
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-yellow.svg" alt="License: MIT"></a>
   <a href="pyproject.toml"><img src="https://img.shields.io/badge/Python-3.10%2B-blue.svg" alt="Python 3.10+"></a>
-  <a href="https://pypi.org/project/gas-client/"><img src="https://img.shields.io/pypi/v/gas-client.svg" alt="GAS Client on PyPI"></a>
+  <a href="https://pypi.org/project/gas-client/"><img src="https://img.shields.io/pypi/v/gas-client.svg" alt="Python GAS Client on PyPI"></a>
+  <a href="https://www.npmjs.com/package/@gibd/gas-client"><img src="https://img.shields.io/npm/v/@gibd/gas-client.svg" alt="JavaScript GAS Client on npm"></a>
   <a href="http://geospatial-agentic-services.online/registry"><img src="https://img.shields.io/badge/GAS-Registry-256b7f.svg" alt="GAS Registry"></a>
   <a href="https://GIBD2015.github.io/geospatial-agentic-services/"><img src="https://img.shields.io/badge/GAS-Docs-0067b1.svg" alt="GAS Documentation"></a>
   <a href="https://www.researchgate.net/publication/404738967_Geospatial_Agentic_Services_A_Framework_for_Interoperable_Geospatial_Intelligence"><img src="https://img.shields.io/badge/GAS-Paper-green.svg" alt="GAS Paper"></a>
@@ -28,8 +29,8 @@ agentic systems should be built. Instead, it focuses on the shared service
 contracts needed when different geospatial agents, applications, notebooks, and
 AI orchestrators need to work together.
 
-This repository provides a reference GAS server, a Python client SDK, a GAS
-Registry web app, example notebooks, interface schemas, developer
+This repository provides a reference GAS server, Python and JavaScript client
+SDKs, a GAS Registry web app, example notebooks, interface schemas, developer
 documentation, and working reference agent implementations.
 
 - Documentation: [GAS documentation site](https://GIBD2015.github.io/Geospatial-Agentic-Services/)
@@ -44,15 +45,20 @@ Start here if you want to discover and call existing GAS services from
 notebooks, applications, GIS workflows, or AI orchestrators.
 
 - [Use GAS Services](docs/gas_client_sdk.md)
+- [Use GAS Canvas](docs/gas_canvas.md)
 - [GAS Interfaces](docs/gas_interfaces.md)
 - [GAS Registry](docs/gas_registry.md)
 - [Included Agents](docs/included_agents.md)
 - [Notebook Examples](docs/examples.md)
 
-Install the published client SDK:
+Install a published client SDK:
 
 ```powershell
 python -m pip install gas-client
+```
+
+```bash
+npm install @gibd/gas-client
 ```
 
 Call a GAS service:
@@ -62,6 +68,13 @@ from gas_client import GasClient
 
 client = GasClient("https://your-gas-server.com")
 print(client.list_agents())
+```
+
+```javascript
+import { GasClient } from '@gibd/gas-client';
+
+const client = new GasClient("https://your-gas-server.com");
+console.log(await client.listAgents());
 ```
 
 ### Add an Agent Service
@@ -106,7 +119,7 @@ http://127.0.0.1:4042
 ### Improve the Codebase
 
 Start here if you want to contribute to the GAS server framework, registry,
-client SDK, schemas, examples, tests, or documentation.
+client SDKs, schemas, examples, tests, or documentation.
 
 - [Contributing](CONTRIBUTING.md)
 - [Server Architecture](docs/gas_server_architecture.md)

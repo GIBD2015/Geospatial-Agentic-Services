@@ -32,6 +32,51 @@ KNOWN_PASDA_SERVICES = {
     "pasda/uscensus2010_2020": "pasda/USCensus2010_2020"
 }
 
+PASDA_DIRECT_DOWNLOADS = (
+    {
+        "terms": ("hospital", "healthcare", "health care", "medical facility"),
+        "service_name": "pasda/DepHealth",
+        "layer_id": 6,
+        "filename": "pa_hospitals",
+        "summary": "Pennsylvania hospitals."
+    },
+    {
+        "terms": ("county", "counties"),
+        "service_name": "pasda/PennDOT",
+        "layer_id": 7,
+        "filename": "pa_counties",
+        "summary": "Pennsylvania county boundaries."
+    },
+    {
+        "terms": ("school district", "school districts"),
+        "service_name": "pasda/PennDOT",
+        "layer_id": 11,
+        "filename": "pa_school_districts",
+        "summary": "Pennsylvania school district boundaries."
+    },
+    {
+        "terms": ("municipal", "municipality", "municipalities"),
+        "service_name": "pasda/PennDOT",
+        "layer_id": 10,
+        "filename": "pa_municipal_boundaries",
+        "summary": "Pennsylvania municipal boundaries."
+    },
+    {
+        "terms": ("state boundary", "pennsylvania boundary", "pa boundary"),
+        "service_name": "pasda/PennDOT",
+        "layer_id": 13,
+        "filename": "pa_state_boundary",
+        "summary": "Pennsylvania state boundary."
+    },
+    {
+        "terms": ("road", "roads", "highway", "highways"),
+        "service_name": "pasda/PennDOT",
+        "layer_id": 4,
+        "filename": "pa_state_roads",
+        "summary": "Pennsylvania state roads."
+    },
+)
+
 class PasdaAgent(GeoAgent):
     agent_id = "pasda_agent"
     agent_name = "PASDA Discovery Agent"
@@ -525,7 +570,69 @@ class PasdaAgent(GeoAgent):
         description = re.sub(r"\s+", " ", description).strip()
         if not description or len(description) < 10:
             description = f"Downloaded {name} from PASDA."
-        return {"description": description}
+        details = {
+            "description": description,
+            "geometry_type": metadata.get("geometryType")
+        }
+        spatial_reference = metadata.get("extent", {}).get("spatialReference", {}) if isinstance(metadata.get("extent"), dict) else {}
+        wkid = spatial_reference.get("latestWkid") or spatial_reference.get("wkid")
+        if wkid:
+            details["crs"] = f"EPSG:{wkid}"
+        return details
+
+    def _try_direct_pasda_download(self, query: str, progress_callback=None) -> bool:
+        normalized_query = re.sub(r"\s+", " ", (query or "").lower())
+        if not any(term in normalized_query for term in ("pa", "pennsylvania", "pasda")):
+            return False
+
+        for shortcut in PASDA_DIRECT_DOWNLOADS:
+            if not any(term in normalized_query for term in shortcut["terms"]):
+                continue
+
+            service_name = shortcut["service_name"]
+            layer_id = shortcut["layer_id"]
+            self._emit_progress(
+                progress_callback,
+                stage="source_selection",
+                message=f"Matched a high-confidence PASDA shortcut for {shortcut['summary']}",
+                data={"service_name": service_name, "layer_id": layer_id},
+            )
+            self._emit_progress(
+                progress_callback,
+                stage="download_start",
+                message=f"Downloading PASDA layer {layer_id} from {service_name}.",
+                data={"service_name": service_name, "layer_id": layer_id},
+            )
+            result_text = self.download_data(service_name, layer_id, query)
+            try:
+                result = json.loads(result_text)
+            except ValueError:
+                result = {"status": "error", "message": result_text}
+            if result.get("status") != "success":
+                self._emit_progress(
+                    progress_callback,
+                    stage="error",
+                    message=f"Direct PASDA download failed: {result.get('message') or result.get('error') or result_text}",
+                    data={"service_name": service_name, "layer_id": layer_id},
+                )
+                return False
+
+            self.summary = self.summary or shortcut["summary"]
+            self.execution_outputs["text"] = self.summary
+            self._emit_progress(
+                progress_callback,
+                stage="download_complete",
+                message=f"Downloaded {shortcut['summary']}",
+                data={
+                    "service_name": service_name,
+                    "layer_id": layer_id,
+                    "feature_count": result.get("feature_count"),
+                    "file_path": result.get("file_path")
+                },
+            )
+            return True
+
+        return False
 
     def download_data(self, service_name: str, layer_id: int, output_filename: str) -> str:
         service_name = self._normalize_service_name(service_name)
@@ -662,6 +769,16 @@ class PasdaAgent(GeoAgent):
                 message="Analyzing prompt with AI and identifying mapped datasets.",
                 data={"max_iterations": max_iterations},
             )
+
+            if self._try_direct_pasda_download(user_query, progress_callback=progress_callback):
+                duration = time.time() - start_time
+                self._emit_progress(
+                    progress_callback,
+                    stage="complete",
+                    message="PASDA shortcut workflow completed.",
+                    data={"downloaded": list(self.downloaded)},
+                )
+                return self._final_result(user_query, dataset_path, duration)
 
             last_assistant_text = None
             workflow_complete = False

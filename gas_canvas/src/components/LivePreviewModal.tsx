@@ -4,7 +4,29 @@ import mapboxgl from "mapbox-gl";
 import "mapbox-gl/dist/mapbox-gl.css";
 import Papa from "papaparse";
 
-mapboxgl.accessToken = import.meta.env.VITE_MAPBOX_TOKEN;
+const mapboxToken = import.meta.env.VITE_MAPBOX_TOKEN || "";
+mapboxgl.accessToken = mapboxToken;
+
+const previewMapStyle = mapboxToken
+  ? "mapbox://styles/mapbox/light-v11"
+  : {
+      version: 8 as const,
+      sources: {
+        osm: {
+          type: "raster" as const,
+          tiles: ["https://tile.openstreetmap.org/{z}/{x}/{y}.png"],
+          tileSize: 256,
+          attribution: "OpenStreetMap"
+        }
+      },
+      layers: [
+        {
+          id: "osm",
+          type: "raster" as const,
+          source: "osm"
+        }
+      ]
+    };
 
 const getApiUrl = (path: string) => {
   const pathname = window.location.pathname;
@@ -70,7 +92,14 @@ export const LivePreviewModal: React.FC<LivePreviewModalProps> = ({
       .then(async (res) => {
         if (!res.ok) {
           const errText = await res.text().catch(() => "Unknown error");
-          throw new Error(`Failed to fetch file: ${errText}`);
+          let parsedError = "";
+          try {
+            const parsed = JSON.parse(errText);
+            parsedError = parsed.details || parsed.error || "";
+          } catch {
+            parsedError = "";
+          }
+          throw new Error(parsedError || `Failed to fetch file: ${errText}`);
         }
         return await res.text();
       })
@@ -139,7 +168,7 @@ export const LivePreviewModal: React.FC<LivePreviewModalProps> = ({
 
       const map = new mapboxgl.Map({
         container: mapContainerRef.current,
-        style: 'mapbox://styles/mapbox/light-v11',
+        style: previewMapStyle,
         center: [0, 0],
         zoom: 1
       });
@@ -281,10 +310,11 @@ export const LivePreviewModal: React.FC<LivePreviewModalProps> = ({
               href={url}
               target="_blank"
               rel="referrer"
+              download
               className="p-1.5 hover:bg-neutral-150 rounded dark:hover:bg-neutral-800 text-neutral-605 dark:text-neutral-300 flex items-center space-x-1 text-xs font-semibold"
             >
               <ExternalLink className="w-4 h-4" />
-              <span className="hidden sm:inline">Open Native</span>
+              <span className="hidden sm:inline">Download</span>
             </a>
 
             <button

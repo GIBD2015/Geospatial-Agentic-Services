@@ -35,7 +35,8 @@ flowchart TB
   subgraph Consumers["Service Consumers"]
     direction TB
     Browser["Browser apps"]
-    Notebook["Python notebooks<br/>GAS Client SDK"]
+    Notebook["Python notebooks<br/>Python GAS SDK"]
+    JSApps["JavaScript apps<br/>JS GAS SDK"]
     Orchestrator["AI orchestrators<br/>workflow tools"]
   end
 
@@ -48,6 +49,7 @@ flowchart TB
   end
 
   Consumers --> Entry
+  JSApps --> Entry
   Entry --> Capabilities
   Entry --> Describe
   Entry --> Router
@@ -142,9 +144,9 @@ route namespace:
 ```
 
 This means the server behaves like a catalog and gateway for multiple
-geospatial web services. A browser, Python client, or AI orchestrator discovers
-available services through `GetCapabilities`, reads each service through
-`DescribeAgent`, and then calls the selected agent service.
+geospatial web services. A browser, Python client, JavaScript client, or AI
+orchestrator discovers available services through `GetCapabilities`, reads each
+service through `DescribeAgent`, and then calls the selected agent service.
 
 ## Folder Structure
 
@@ -339,7 +341,8 @@ external Flask server.
 
 ### `gas_client`
 
-This folder contains a lightweight Python client for GAS. It can:
+This folder contains lightweight Python and JavaScript clients for GAS. They
+can:
 
 - read `GetCapabilities`
 - read `DescribeAgent`
@@ -349,8 +352,14 @@ This folder contains a lightweight Python client for GAS. It can:
 - poll task results
 - encode local files as input datasets
 
-The client is useful for testing the server and for showing how external users
-or AI orchestrators can consume GAS services.
+The Python client lives under `gas_client/Python` and is also packaged for
+PyPI from `packages/gas-client`. The JavaScript client lives under
+`gas_client/JS` and is published as `@gibd/gas-client` for Node.js, browser,
+and Edge-runtime consumers.
+
+The clients are useful for testing the server and for showing how external
+users, web applications, workflow tools, or AI orchestrators can consume GAS
+services.
 
 ### `gas_registry`
 
@@ -542,13 +551,14 @@ workflow-chaining use cases. They are not a second artifact delivery channel;
 download URLs or encoded base64 payloads are delivered through
 `outputs.artifacts`.
 
-Artifact roles are part of the client-facing contract. The service layer
-normalizes generic implementation keys such as `output_file` or `output_path`
-to the role `output`, and `dataset_path` or `dataset_file` to the role
-`dataset`. Agents that return multiple artifacts should use semantic roles,
-for example `ndvi_map_html_file`, `validated_plan_json_file`, or
-`earth_engine_export_task_json_file`, so clients can select artifacts without
-guessing from filenames.
+Artifact metadata is part of the client-facing contract. The service layer
+normalizes generated files so each artifact has `name`, `role`, `format`, and
+`description` fields. `name` is for display and orchestration; `filename` is
+the exact server-side download identity. Roles remain stable selectors for
+client code and may be generic (`output`, `dataset`) or agent-specific
+(`ndvi_map_html_file`, `validated_plan_json_file`). Clients should combine
+`role`, `format`, `description`, and spatial metadata instead of guessing from
+opaque generated filenames.
 
 ## Model And Credential Design
 
@@ -634,8 +644,8 @@ required inputs, output artifacts, and task response format from
 `GetCapabilities` and `DescribeAgent`.
 
 The server does not coordinate multi-agent collaboration internally. External
-clients, browser applications, Python workflows, or AI orchestrators can call
-multiple GAS services as needed.
+clients, browser applications, Python or JavaScript workflows, or AI
+orchestrators can call multiple GAS services as needed.
 
 ## Plugin-Style Extension
 

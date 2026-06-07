@@ -103,7 +103,7 @@ export const CredentialsVault: React.FC<CredentialsVaultProps> = ({
             </button>
             <button
               onClick={handleSaveAndClose}
-              className="py-1.5 px-4 bg-neutral-900 hover:bg-neutral-800 text-white dark:bg-neutral-100 dark:hover:bg-neutral-200 dark:text-neutral-900 rounded-lg text-xs font-bold shadow-sm transition-colors"
+              className="py-1.5 px-4 bg-sky-600 hover:bg-sky-500 text-white rounded-lg text-xs font-bold shadow-sm transition-colors"
             >
               Save Credentials
             </button>

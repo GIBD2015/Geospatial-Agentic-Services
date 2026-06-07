@@ -47,7 +47,7 @@ class WebMappingAppAgent(GeoAgent):
         self.service_name = format_service_name(self.agent_name)
         self.client = build_llm_client(
             service_name=self.service_name,
-            openai_api_key=self.api_key,
+            openai_api_key=api_key,
         )
         self.generated_code: str | None = None
         self.last_error = ""
