@@ -17,8 +17,23 @@ import {
   Github,
   Map as MapIcon,
   FileCode,
+  FileText,
   Files,
-  Trash2
+  Trash2,
+  Save,
+  FolderOpen,
+  Upload,
+  ZoomIn,
+  ZoomOut,
+  RotateCcw,
+  LayoutGrid,
+  Maximize2,
+  X,
+  Copy,
+  ClipboardPaste,
+  CopyPlus,
+  Play,
+  Pencil
 } from "lucide-react";
 import { AgentNode, NodeConnection, SavedWorkflow, TaskResult, TaskArtifact } from "./types";
 import { SidebarPanel, AGENT_TEMPLATES } from "./components/SidebarPanel";
@@ -201,6 +216,26 @@ export default function App() {
     x: number;
     y: number;
   } | null>(null);
+  const [nodeContextMenu, setNodeContextMenu] = useState<{
+    nodeId: string;
+    x: number;
+    y: number;
+  } | null>(null);
+  const [canvasContextMenu, setCanvasContextMenu] = useState<{
+    x: number;
+    y: number;
+    canvasX: number;
+    canvasY: number;
+  } | null>(null);
+  const [copiedNode, setCopiedNode] = useState<AgentNode | null>(null);
+  const [renameNodeRequest, setRenameNodeRequest] = useState<{
+    nodeId: string;
+    requestId: number;
+  } | null>(null);
+  const [editInstructionsRequest, setEditInstructionsRequest] = useState<{
+    nodeId: string;
+    requestId: number;
+  } | null>(null);
 
   const deleteConnection = (connectionId: string) => {
     const nextConnections = connectionsRef.current.filter((connection) => connection.id !== connectionId);
@@ -208,6 +243,84 @@ export default function App() {
     setConnections(nextConnections);
     setSelectedConnectionId((currentId) => (currentId === connectionId ? null : currentId));
     setConnectionContextMenu(null);
+  };
+
+  const closeContextMenus = () => {
+    setConnectionContextMenu(null);
+    setNodeContextMenu(null);
+    setCanvasContextMenu(null);
+  };
+
+  const copyNodeToClipboard = (nodeId: string) => {
+    const node = nodesRef.current.find((item) => item.id === nodeId);
+    if (!node) return;
+
+    setCopiedNode({ ...node });
+    setSelectedNodeId(node.id);
+    setSelectedDescribeAgentInfo(null);
+    closeContextMenus();
+    showToast(`Copied ${node.name}.`);
+  };
+
+  const pasteCopiedNode = (position: { x: number; y: number }) => {
+    if (!copiedNode) return;
+
+    const newId = `agent_${Date.now()}`;
+    const nextNode: AgentNode = {
+      ...copiedNode,
+      id: newId,
+      name: `${copiedNode.name} Copy`,
+      x: Math.max(0, Math.min(CANVAS_SIZE - NODE_CARD_WIDTH, position.x - NODE_CARD_WIDTH / 2)),
+      y: Math.max(0, Math.min(CANVAS_SIZE - NODE_CARD_HEIGHT, position.y - 36)),
+      status: "idle",
+      logs: ["[SYSTEM]: Node pasted in workspace."],
+      currentTaskId: undefined,
+      lastRequest: undefined,
+      results: undefined
+    };
+
+    setNodes((prev) => [...prev, nextNode]);
+    setSelectedNodeId(newId);
+    setSelectedDescribeAgentInfo(null);
+    closeContextMenus();
+  };
+
+  const duplicateNode = (nodeId: string) => {
+    const node = nodesRef.current.find((item) => item.id === nodeId);
+    if (!node) return;
+
+    const newId = `agent_${Date.now()}`;
+    const nextNode: AgentNode = {
+      ...node,
+      id: newId,
+      name: `${node.name} Copy`,
+      x: Math.max(0, Math.min(CANVAS_SIZE - NODE_CARD_WIDTH, node.x + 36)),
+      y: Math.max(0, Math.min(CANVAS_SIZE - NODE_CARD_HEIGHT, node.y + 36)),
+      status: "idle",
+      logs: ["[SYSTEM]: Node duplicated in workspace."],
+      currentTaskId: undefined,
+      lastRequest: undefined,
+      results: undefined
+    };
+
+    setNodes((prev) => [...prev, nextNode]);
+    setSelectedNodeId(newId);
+    setSelectedDescribeAgentInfo(null);
+    closeContextMenus();
+  };
+
+  const requestRenameNode = (nodeId: string) => {
+    setSelectedNodeId(nodeId);
+    setSelectedDescribeAgentInfo(null);
+    setRenameNodeRequest({ nodeId, requestId: Date.now() });
+    closeContextMenus();
+  };
+
+  const requestEditNodeInstructions = (nodeId: string) => {
+    setSelectedNodeId(nodeId);
+    setSelectedDescribeAgentInfo(null);
+    setEditInstructionsRequest({ nodeId, requestId: Date.now() });
+    closeContextMenus();
   };
 
   const updateOutputExpansion = (nodeId: string, expanded: boolean) => {
@@ -236,9 +349,9 @@ export default function App() {
   }, [selectedConnectionId]);
 
   useEffect(() => {
-    if (!connectionContextMenu) return;
+    if (!connectionContextMenu && !nodeContextMenu && !canvasContextMenu) return;
 
-    const closeMenu = () => setConnectionContextMenu(null);
+    const closeMenu = () => closeContextMenus();
     window.addEventListener("pointerdown", closeMenu);
     window.addEventListener("blur", closeMenu);
 
@@ -246,11 +359,12 @@ export default function App() {
       window.removeEventListener("pointerdown", closeMenu);
       window.removeEventListener("blur", closeMenu);
     };
-  }, [connectionContextMenu]);
+  }, [connectionContextMenu, nodeContextMenu, canvasContextMenu]);
 
   // To avoid React batching update delays causing topological sort data races
   const volatileResultsRef = useRef<Record<string, TaskResult>>({});
   const runningTaskControllersRef = useRef<Record<string, AbortController>>({});
+  const workflowCancelRequestedRef = useRef(false);
 
   // Gas servers state
   const [servers, setServers] = useState<{ url: string; providerName: string; provider?: any; agents: any[]; isExpanded?: boolean }[]>([]);
@@ -265,6 +379,7 @@ export default function App() {
   const [isInspectorVisible, setIsInspectorVisible] = useState(true);
   const canvasScrollRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLDivElement>(null);
+  const canvasContextImportInputRef = useRef<HTMLInputElement>(null);
   const hasCenteredCanvasRef = useRef(false);
   const savedCanvasViewportRef = useRef({
     scrollLeft: 0,
@@ -532,18 +647,20 @@ export default function App() {
     zoomRef.current = zoom;
   }, [zoom]);
 
-  // Handle adding an agent node instance to the active canvas center
-  const handleAddAgentNode = (agentId: string, name: string, serverUrl?: string) => {
+  // Handle adding an agent node instance to the active canvas center or a requested canvas point
+  const handleAddAgentNode = (agentId: string, name: string, serverUrl?: string, position?: { x: number; y: number }) => {
     const newId = `agent_${Date.now()}`;
     const viewportCenter = getCanvasViewportCenter();
     const stagger = (nodes.length * 25) % 200;
+    const requestedX = position ? position.x - NODE_CARD_WIDTH / 2 : viewportCenter.x - NODE_CARD_WIDTH / 2 + stagger;
+    const requestedY = position ? position.y - 36 : viewportCenter.y - NODE_CARD_HEIGHT / 2 + stagger;
 
     const newNode: AgentNode = {
       id: newId,
       agentId,
       name: `${name} ${nodes.filter(n => n.agentId === agentId).length + 1}`,
-      x: Math.max(0, Math.min(CANVAS_SIZE - NODE_CARD_WIDTH, viewportCenter.x - NODE_CARD_WIDTH / 2 + stagger)),
-      y: Math.max(0, Math.min(CANVAS_SIZE - NODE_CARD_HEIGHT, viewportCenter.y - NODE_CARD_HEIGHT / 2 + stagger)),
+      x: Math.max(0, Math.min(CANVAS_SIZE - NODE_CARD_WIDTH, requestedX)),
+      y: Math.max(0, Math.min(CANVAS_SIZE - NODE_CARD_HEIGHT, requestedY)),
       instructions: DEFAULT_TASK_INSTRUCTIONS,
       inputDatasets: [],
       credentials: {},
@@ -554,6 +671,35 @@ export default function App() {
 
     setNodes((prev) => [...prev, newNode]);
     setSelectedNodeId(newId);
+    setSelectedDescribeAgentInfo(null);
+    setActiveWorkspaceTab("canvas");
+  };
+
+  const handleCanvasDragOver = (e: React.DragEvent<HTMLDivElement>) => {
+    if (!e.dataTransfer.types.includes("application/x-gas-agent")) return;
+    e.preventDefault();
+    e.dataTransfer.dropEffect = "copy";
+  };
+
+  const handleCanvasDrop = (e: React.DragEvent<HTMLDivElement>) => {
+    const rawAgent = e.dataTransfer.getData("application/x-gas-agent");
+    if (!rawAgent || !canvasRef.current) return;
+
+    e.preventDefault();
+
+    try {
+      const agent = JSON.parse(rawAgent) as { agentId?: string; name?: string; serverUrl?: string };
+      if (!agent.agentId || !agent.name) return;
+
+      const canvasRect = canvasRef.current.getBoundingClientRect();
+      const dropPoint = {
+        x: (e.clientX - canvasRect.left) / zoom,
+        y: (e.clientY - canvasRect.top) / zoom
+      };
+      handleAddAgentNode(agent.agentId, agent.name, agent.serverUrl, dropPoint);
+    } catch (err) {
+      console.error("Failed to parse dropped GAS agent", err);
+    }
   };
 
   // Drag handlers
@@ -621,6 +767,7 @@ export default function App() {
 
     if (!isEmptyCanvasTarget) return;
 
+    closeContextMenus();
     setSelectedNodeId(null);
     setSelectedDescribeAgentInfo(null);
     setSelectedConnectionId(null);
@@ -636,6 +783,41 @@ export default function App() {
     };
     setIsCanvasPanning(true);
     e.currentTarget.setPointerCapture(e.pointerId);
+  };
+
+  const handleNodeContextMenu = (nodeId: string, e: React.MouseEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setSelectedNodeId(nodeId);
+    setSelectedDescribeAgentInfo(null);
+    setSelectedConnectionId(null);
+    setConnectionContextMenu(null);
+    setCanvasContextMenu(null);
+    setNodeContextMenu({
+      nodeId,
+      x: e.clientX,
+      y: e.clientY
+    });
+  };
+
+  const handleCanvasContextMenu = (e: React.MouseEvent<HTMLDivElement>) => {
+    const target = e.target as HTMLElement;
+    const isEmptyCanvasTarget = e.target === e.currentTarget || target === canvasRef.current;
+    if (!isEmptyCanvasTarget || !canvasRef.current) return;
+
+    e.preventDefault();
+    const canvasRect = canvasRef.current.getBoundingClientRect();
+    setSelectedNodeId(null);
+    setSelectedDescribeAgentInfo(null);
+    setSelectedConnectionId(null);
+    setConnectionContextMenu(null);
+    setNodeContextMenu(null);
+    setCanvasContextMenu({
+      x: e.clientX,
+      y: e.clientY,
+      canvasX: (e.clientX - canvasRect.left) / zoom,
+      canvasY: (e.clientY - canvasRect.top) / zoom
+    });
   };
 
   const handleCanvasWheel = (e: WheelEvent) => {
@@ -927,6 +1109,21 @@ export default function App() {
     setServers(prev => prev.filter(s => s.url !== url));
   };
 
+  const handleRemoveServerAgent = (serverUrl: string, agentId: string) => {
+    setServers((prev) =>
+      prev.map((server) =>
+        server.url === serverUrl
+          ? { ...server, agents: server.agents.filter((agent) => agent.agent_id !== agentId) }
+          : server
+      )
+    );
+    setSelectedDescribeAgentInfo((current) => {
+      const currentAgentId = current?.profile?.agent_id || current?.agent_id;
+      const currentServerUrl = current?._server?.url;
+      return currentAgentId === agentId && currentServerUrl === serverUrl ? null : current;
+    });
+  };
+
   const handleToggleServer = (url: string) => {
     setServers(prev => prev.map(s => s.url === url ? { ...s, isExpanded: !s.isExpanded } : s));
   };
@@ -966,6 +1163,31 @@ export default function App() {
     if (!node) return null;
     const template = AGENT_TEMPLATES.find((tpl) => tpl.agent_id === node.agentId);
     const streamAgentName = template?.name || node.name;
+    const parentLinks = activeConnections.filter((c) => c.targetId === nodeId);
+    const unfinishedParents = parentLinks
+      .map((link) => activeNodes.find((n) => n.id === link.sourceId))
+      .filter((parent): parent is AgentNode => !parent || parent.status !== "completed");
+
+    if (unfinishedParents.length > 0) {
+      const upstreamNames = unfinishedParents
+        .map((parent) => parent?.name || "an upstream agent")
+        .join(", ");
+      const message = `Cannot run this agent yet. Waiting for upstream agent${unfinishedParents.length > 1 ? "s" : ""} to finish: ${upstreamNames}.`;
+      const blockedNodes = nodesRef.current.map((n) => {
+        if (n.id === nodeId) {
+          return {
+            ...n,
+            status: "waiting" as const,
+            logs: [...n.logs, formatLocalLogLine("task_blocked", message)]
+          };
+        }
+        return n;
+      });
+      nodesRef.current = blockedNodes;
+      setNodes(blockedNodes);
+      showToast(message);
+      return null;
+    }
 
     if (isPlaceholderInstruction(node.instructions)) {
       const message = "Task instructions are not defined yet. Double click the agent box to enter instructions before running this agent.";
@@ -984,24 +1206,27 @@ export default function App() {
       return null;
     }
 
-    // Mark running
-    setNodes((prev) =>
-      prev.map((n) => {
-        if (n.id === nodeId) {
-          return {
-            ...n,
-            status: "running",
-            currentTaskId: undefined,
-            logs: [...n.logs, formatLocalLogLine("task_submitting", `Submitting task execution request to ${streamAgentName}.`)]
-          };
-        }
-        return n;
-      })
-    );
+    delete volatileResultsRef.current[nodeId];
+
+    // Mark running and clear stale runtime output from any previous execution.
+    const runningNodes = nodesRef.current.map((n) => {
+      if (n.id === nodeId) {
+        return {
+          ...n,
+          status: "running" as const,
+          currentTaskId: undefined,
+          lastRequest: undefined,
+          results: undefined,
+          logs: [formatLocalLogLine("task_submitting", `Submitting task execution request to ${streamAgentName}.`)]
+        };
+      }
+      return n;
+    });
+    nodesRef.current = runningNodes;
+    setNodes(runningNodes);
 
     // Compute active datasets input binders:
     // Gather outputs of connected parent nodes
-    const parentLinks = activeConnections.filter((c) => c.targetId === nodeId);
     const parentDatasetUrls: string[] = [];
 
     for (const link of parentLinks) {
@@ -1079,17 +1304,17 @@ export default function App() {
         }
       };
 
-      setNodes((prev) =>
-        prev.map((n) => {
-          if (n.id === nodeId) {
-            return {
-              ...n,
-              lastRequest: payload
-            };
-          }
-          return n;
-        })
-      );
+      const nextNodes = nodesRef.current.map((n) => {
+        if (n.id === nodeId) {
+          return {
+            ...n,
+            lastRequest: payload
+          };
+        }
+        return n;
+      });
+      nodesRef.current = nextNodes;
+      setNodes(nextNodes);
 
       console.log(`Firing task payload on node ${nodeId}:`, payload);
       const controller = new AbortController();
@@ -1387,8 +1612,39 @@ export default function App() {
     }
   };
 
+  const cancelFullPipeline = async () => {
+    if (!isPipelineRunning) return;
+
+    workflowCancelRequestedRef.current = true;
+    const runningNodes = nodesRef.current.filter((node) => node.status === "running");
+    const waitingNodeIds = new Set(
+      nodesRef.current
+        .filter((node) => node.status === "waiting")
+        .map((node) => node.id)
+    );
+
+    if (waitingNodeIds.size > 0) {
+      const nextNodes = nodesRef.current.map((node) =>
+        waitingNodeIds.has(node.id)
+          ? {
+              ...node,
+              status: "canceled" as const,
+              currentTaskId: undefined,
+              logs: [...node.logs, formatLocalLogLine("workflow_cancelled", "Workflow cancellation requested before this agent started.")]
+            }
+          : node
+      );
+      nodesRef.current = nextNodes;
+      setNodes(nextNodes);
+    }
+
+    showToast("Canceling workflow...");
+    await Promise.all(runningNodes.map((node) => cancelNodeExecution(node.id)));
+  };
+
   // Sequentially run all nodes matching dependency hierarchy levels
   const handleRunFullPipeline = async () => {
+    workflowCancelRequestedRef.current = false;
     setIsPipelineRunning(true);
 
     try {
@@ -1398,7 +1654,10 @@ export default function App() {
       const resetNodes: AgentNode[] = nodesRef.current.map((n) => ({
         ...n,
         status: currentConnections.some((connection) => connection.targetId === n.id) ? "waiting" : "idle",
-        logs: [...n.logs, "[SYSTEM]: Queue reset, starting automated workspace pipeline run."]
+        currentTaskId: undefined,
+        lastRequest: undefined,
+        results: undefined,
+        logs: ["[SYSTEM]: Queue reset, starting automated workspace pipeline run."]
       }));
       nodesRef.current = resetNodes;
       setNodes(resetNodes);
@@ -1408,6 +1667,8 @@ export default function App() {
       const inFlight = new Map<string, Promise<{ node: AgentNode; outcome: TaskResult | null; error?: any }>>();
 
       const getReadyNodes = () => {
+        if (workflowCancelRequestedRef.current) return [];
+
         const activeNodes = nodesRef.current;
         const activeConnections = connectionsRef.current;
 
@@ -1442,6 +1703,11 @@ export default function App() {
       while (inFlight.size > 0) {
         const finished = await Promise.race(Array.from(inFlight.values()));
         inFlight.delete(finished.node.id);
+
+        if (workflowCancelRequestedRef.current) {
+          failedIds.add(finished.node.id);
+          continue;
+        }
 
         if (finished.outcome) {
           completedIds.add(finished.node.id);
@@ -1984,6 +2250,16 @@ export default function App() {
     showToast("Canvas auto-arranged and zoomed to fit.");
   };
 
+  const handleZoomToFit = () => {
+    if (nodesRef.current.length === 0) {
+      centerCanvasViewport("smooth");
+      showToast("Canvas is empty. Centered the workspace.");
+      return;
+    }
+
+    focusCanvasOnNodes(nodesRef.current);
+  };
+
   // Credentials changes
   const handleSaveCredentials = (keys: { OPENAI_API_KEY: string }) => {
     setCredentials(keys);
@@ -1993,6 +2269,7 @@ export default function App() {
 
   // Render variables helper
   const selectedNode = nodes.find((n) => n.id === selectedNodeId) || null;
+  const nodeContextMenuNode = nodeContextMenu ? nodes.find((node) => node.id === nodeContextMenu.nodeId) || null : null;
   const updateNode = (nodeId: string, updates: Partial<AgentNode>) => {
     const nextNodes = nodesRef.current.map((n) => (n.id === nodeId ? { ...n, ...updates } : n));
     nodesRef.current = nextNodes;
@@ -2052,19 +2329,10 @@ export default function App() {
               servers={servers}
               onAddServer={handleAddServer}
               onRemoveServer={handleRemoveServer}
+              onRemoveAgent={handleRemoveServerAgent}
               onToggleServer={handleToggleServer}
               isSyncingServer={isSyncingServer}
               width={sidebarWidth}
-              selectedAgentId={
-                selectedNodeId
-                  ? nodes.find(n => n.id === selectedNodeId)?.agentId
-                  : selectedDescribeAgentInfo?.profile?.agent_id || selectedDescribeAgentInfo?.agent_id || null
-              }
-              selectedServerUrl={
-                selectedNodeId
-                  ? nodes.find(n => n.id === selectedNodeId)?.serverUrl
-                  : selectedDescribeAgentInfo?._server?.url || null
-              }
             />
 
             {/* RESIZER DRAG HANDLE LEFT */}
@@ -2107,6 +2375,7 @@ export default function App() {
               <CanvasControls
                 onClearCanvas={handleClearCanvas}
                 onRunFullPipeline={handleRunFullPipeline}
+                onCancelFullPipeline={cancelFullPipeline}
                 isPipelineRunning={isPipelineRunning}
                 onLoadPreset={loadPresetTemplate}
                 onSaveWorkflow={handleSaveWorkflow}
@@ -2120,6 +2389,7 @@ export default function App() {
                 onZoomOut={() => setZoom(z => Math.max(0.3, z - 0.1))}
                 onResetZoom={() => setZoom(1)}
                 onAutoLayout={handleAutoLayout}
+                onZoomToFit={handleZoomToFit}
               />
 
               {/* INTERACTIVE GRID CANVAS CONTAINER */}
@@ -2130,6 +2400,9 @@ export default function App() {
                 onPointerUp={handleCanvasPointerUp}
                 onPointerCancel={handleCanvasPointerUp}
                 onPointerDown={handleCanvasPointerDown}
+                onContextMenu={handleCanvasContextMenu}
+                onDragOver={handleCanvasDragOver}
+                onDrop={handleCanvasDrop}
                 onScroll={saveCanvasViewport}
                 style={{ cursor: dragNodeId || isCanvasPanning ? "grabbing" : "grab" }}
               >
@@ -2322,8 +2595,11 @@ export default function App() {
                     }}
                     outputsExpanded={expandedOutputNodeIds.has(node.id)}
                     onOutputsExpandedChange={updateOutputExpansion}
+                    renameRequestId={renameNodeRequest?.nodeId === node.id ? renameNodeRequest.requestId : 0}
+                    editInstructionsRequestId={editInstructionsRequest?.nodeId === node.id ? editInstructionsRequest.requestId : 0}
                     onPointerDown={(e) => handleNodePointerDown(node.id, e)}
                     onNodePointerUp={(nodeId) => handlePortPointerUp(nodeId, "input")}
+                    onContextMenu={handleNodeContextMenu}
                     // @ts-ignore
                     onPortPointerDown={(nodeId, type, e, artifactName) => handlePortPointerDown(nodeId, type, e, artifactName)}
                     onPortPointerUp={(nodeId, type) => handlePortPointerUp(nodeId, type)}
@@ -2435,7 +2711,261 @@ export default function App() {
             </div>
           )}
 
-          <div className="absolute bottom-4 left-4 z-40 flex rounded-lg border border-neutral-200 bg-white/95 p-1 shadow-md backdrop-blur">
+          {nodeContextMenu && nodeContextMenuNode && activeWorkspaceTab === "canvas" && (
+            <div
+              onPointerDown={(event) => event.stopPropagation()}
+              className="fixed z-[900] w-44 overflow-hidden rounded-lg border border-neutral-200 bg-white text-xs shadow-xl"
+              style={{ left: nodeContextMenu.x, top: nodeContextMenu.y }}
+            >
+              <button
+                type="button"
+                disabled={nodeContextMenuNode.status === "running"}
+                onClick={() => {
+                  closeContextMenus();
+                  executeSingleNode(nodeContextMenu.nodeId);
+                }}
+                className="flex w-full items-center gap-2 px-3 py-2 text-left font-semibold text-neutral-700 hover:bg-neutral-50 disabled:cursor-not-allowed disabled:text-neutral-400 disabled:hover:bg-white"
+              >
+                <Play className={`h-3.5 w-3.5 ${nodeContextMenuNode.status === "running" ? "text-neutral-400" : "text-emerald-600"}`} />
+                <span>Run Agent</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => duplicateNode(nodeContextMenu.nodeId)}
+                className="flex w-full items-center gap-2 px-3 py-2 text-left font-semibold text-neutral-700 hover:bg-neutral-50"
+              >
+                <CopyPlus className="h-3.5 w-3.5 text-sky-600" />
+                <span>Duplicate</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => copyNodeToClipboard(nodeContextMenu.nodeId)}
+                className="flex w-full items-center gap-2 px-3 py-2 text-left font-semibold text-neutral-700 hover:bg-neutral-50"
+              >
+                <Copy className="h-3.5 w-3.5 text-sky-600" />
+                <span>Copy</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => requestRenameNode(nodeContextMenu.nodeId)}
+                className="flex w-full items-center gap-2 px-3 py-2 text-left font-semibold text-neutral-700 hover:bg-neutral-50"
+              >
+                <Pencil className="h-3.5 w-3.5 text-neutral-500" />
+                <span>Rename</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => requestEditNodeInstructions(nodeContextMenu.nodeId)}
+                className="flex w-full items-center gap-2 px-3 py-2 text-left font-semibold text-neutral-700 hover:bg-neutral-50"
+              >
+                <FileText className="h-3.5 w-3.5 text-neutral-500" />
+                <span>Edit Task Instruction</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  closeContextMenus();
+                  handleDescribeAgent(nodeContextMenuNode.serverUrl || "", nodeContextMenuNode.agentId);
+                }}
+                className="flex w-full items-center gap-2 px-3 py-2 text-left font-semibold text-neutral-700 hover:bg-neutral-50"
+              >
+                <Info className="h-3.5 w-3.5 text-sky-600" />
+                <span>View Details</span>
+              </button>
+              <div className="h-px bg-neutral-100" />
+              <button
+                type="button"
+                onClick={() => {
+                  closeContextMenus();
+                  handleDeleteNode(nodeContextMenu.nodeId);
+                }}
+                className="flex w-full items-center gap-2 px-3 py-2 text-left font-semibold text-rose-600 hover:bg-rose-50"
+              >
+                <Trash2 className="h-3.5 w-3.5" />
+                <span>Delete</span>
+              </button>
+            </div>
+          )}
+
+          {canvasContextMenu && activeWorkspaceTab === "canvas" && (
+            <div
+              onPointerDown={(event) => event.stopPropagation()}
+              className="fixed z-[900] w-48 overflow-visible rounded-lg border border-neutral-200 bg-white py-1 text-xs shadow-xl"
+              style={{ left: canvasContextMenu.x, top: canvasContextMenu.y }}
+            >
+              <button
+                type="button"
+                disabled={isPipelineRunning || nodes.length === 0}
+                onClick={() => {
+                  closeContextMenus();
+                  handleRunFullPipeline();
+                }}
+                className="flex w-full items-center gap-2 px-3 py-2 text-left font-semibold text-neutral-700 hover:bg-neutral-50 disabled:cursor-not-allowed disabled:text-neutral-400 disabled:hover:bg-white"
+              >
+                <Play className={`h-3.5 w-3.5 ${isPipelineRunning || nodes.length === 0 ? "text-neutral-400" : "text-emerald-600"}`} />
+                <span>Run Workflow</span>
+              </button>
+              <button
+                type="button"
+                disabled={!isPipelineRunning}
+                onClick={() => {
+                  closeContextMenus();
+                  cancelFullPipeline();
+                }}
+                className="flex w-full items-center gap-2 px-3 py-2 text-left font-semibold text-neutral-700 hover:bg-neutral-50 disabled:cursor-not-allowed disabled:text-neutral-400 disabled:hover:bg-white"
+              >
+                <X className={`h-3.5 w-3.5 ${isPipelineRunning ? "text-rose-600" : "text-neutral-400"}`} />
+                <span>Cancel Workflow</span>
+              </button>
+              <div className="my-1 h-px bg-neutral-100" />
+              <button
+                type="button"
+                disabled={!copiedNode}
+                onClick={() => pasteCopiedNode({ x: canvasContextMenu.canvasX, y: canvasContextMenu.canvasY })}
+                className="flex w-full items-center gap-2 px-3 py-2 text-left font-semibold text-neutral-700 hover:bg-neutral-50 disabled:cursor-not-allowed disabled:text-neutral-400 disabled:hover:bg-white"
+              >
+                <ClipboardPaste className={`h-3.5 w-3.5 ${copiedNode ? "text-sky-600" : "text-neutral-400"}`} />
+                <span>Paste</span>
+              </button>
+              <div className="my-1 h-px bg-neutral-100" />
+              <button
+                type="button"
+                onClick={() => {
+                  closeContextMenus();
+                  handleSaveWorkflow();
+                }}
+                className="flex w-full items-center gap-2 px-3 py-2 text-left font-semibold text-neutral-700 hover:bg-neutral-50"
+              >
+                <Save className="h-3.5 w-3.5 text-sky-600" />
+                <span>Save Workflow</span>
+              </button>
+              <div className="group relative">
+                <button
+                  type="button"
+                  disabled={savedWorkflowsList.length === 0}
+                  className="flex w-full items-center gap-2 px-3 py-2 text-left font-semibold text-neutral-700 hover:bg-neutral-50 disabled:cursor-not-allowed disabled:text-neutral-400 disabled:hover:bg-white"
+                >
+                  <FolderOpen className={`h-3.5 w-3.5 ${savedWorkflowsList.length > 0 ? "text-sky-600" : "text-neutral-400"}`} />
+                  <span className="flex-1">Load Workflow</span>
+                  <ChevronRight className="h-3.5 w-3.5 text-neutral-400" />
+                </button>
+                {savedWorkflowsList.length > 0 && (
+                  <div className="absolute left-full top-0 hidden w-56 overflow-hidden rounded-lg border border-neutral-200 bg-white text-xs shadow-xl group-hover:block">
+                    {savedWorkflowsList.map((workflow) => (
+                      <button
+                        key={workflow.id}
+                        type="button"
+                        onClick={() => {
+                          closeContextMenus();
+                          handleLoadWorkflow(workflow.id);
+                        }}
+                        className="flex w-full items-center gap-2 px-3 py-2 text-left font-semibold text-neutral-700 hover:bg-neutral-50"
+                      >
+                        <Network className="h-3.5 w-3.5 shrink-0 text-sky-600" />
+                        <span className="truncate">{workflow.name}</span>
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  closeContextMenus();
+                  canvasContextImportInputRef.current?.click();
+                }}
+                className="flex w-full items-center gap-2 px-3 py-2 text-left font-semibold text-neutral-700 hover:bg-neutral-50"
+              >
+                <Upload className="h-3.5 w-3.5 text-sky-600" />
+                <span>Import Workflow</span>
+              </button>
+              <div className="my-1 h-px bg-neutral-100" />
+              <button
+                type="button"
+                disabled={nodes.length === 0}
+                onClick={() => {
+                  closeContextMenus();
+                  handleAutoLayout();
+                }}
+                className="flex w-full items-center gap-2 px-3 py-2 text-left font-semibold text-neutral-700 hover:bg-neutral-50 disabled:cursor-not-allowed disabled:text-neutral-400 disabled:hover:bg-white"
+              >
+                <LayoutGrid className={`h-3.5 w-3.5 ${nodes.length > 0 ? "text-neutral-500" : "text-neutral-400"}`} />
+                <span>Auto Layout</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  closeContextMenus();
+                  handleZoomToFit();
+                }}
+                className="flex w-full items-center gap-2 px-3 py-2 text-left font-semibold text-neutral-700 hover:bg-neutral-50"
+              >
+                <Maximize2 className="h-3.5 w-3.5 text-neutral-500" />
+                <span>Zoom to Fit</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setZoom((z) => Math.min(1.5, z + 0.1));
+                  closeContextMenus();
+                }}
+                className="flex w-full items-center gap-2 px-3 py-2 text-left font-semibold text-neutral-700 hover:bg-neutral-50"
+              >
+                <ZoomIn className="h-3.5 w-3.5 text-neutral-500" />
+                <span>Zoom In</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setZoom((z) => Math.max(0.3, z - 0.1));
+                  closeContextMenus();
+                }}
+                className="flex w-full items-center gap-2 px-3 py-2 text-left font-semibold text-neutral-700 hover:bg-neutral-50"
+              >
+                <ZoomOut className="h-3.5 w-3.5 text-neutral-500" />
+                <span>Zoom Out</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setZoom(1);
+                  closeContextMenus();
+                }}
+                className="flex w-full items-center gap-2 px-3 py-2 text-left font-semibold text-neutral-700 hover:bg-neutral-50"
+              >
+                <RotateCcw className="h-3.5 w-3.5 text-neutral-500" />
+                <span>Reset Zoom</span>
+              </button>
+              <div className="my-1 h-px bg-neutral-100" />
+              <button
+                type="button"
+                onClick={() => {
+                  closeContextMenus();
+                  handleClearCanvas();
+                }}
+                className="flex w-full items-center gap-2 px-3 py-2 text-left font-semibold text-rose-600 hover:bg-rose-50"
+              >
+                <Trash2 className="h-3.5 w-3.5" />
+                <span>Clear Canvas</span>
+              </button>
+            </div>
+          )}
+
+          <input
+            ref={canvasContextImportInputRef}
+            type="file"
+            accept=".json,.gas-workflow.json,application/json"
+            className="hidden"
+            onChange={(event) => {
+              const file = event.target.files?.[0];
+              if (file) {
+                handleImportWorkflowFile(file);
+                event.target.value = "";
+              }
+            }}
+          />
+
+          <div className="absolute bottom-2 left-2 z-40 flex rounded-lg border border-neutral-200 bg-white/95 p-1 shadow-md backdrop-blur">
             <button
               type="button"
               onClick={() => setActiveWorkspaceTab("canvas")}
