@@ -10,12 +10,15 @@ import {
   ZoomIn,
   ZoomOut,
   RotateCcw,
-  LayoutGrid
+  LayoutGrid,
+  Maximize2,
+  X
 } from "lucide-react";
 
 interface CanvasControlsProps {
   onClearCanvas: () => void;
   onRunFullPipeline: () => void;
+  onCancelFullPipeline: () => void;
   isPipelineRunning: boolean;
   onLoadPreset: (presetName: string) => void;
   onSaveWorkflow: () => void;
@@ -29,11 +32,13 @@ interface CanvasControlsProps {
   onZoomOut: () => void;
   onResetZoom: () => void;
   onAutoLayout: () => void;
+  onZoomToFit: () => void;
 }
 
 export const CanvasControls: React.FC<CanvasControlsProps> = ({
   onClearCanvas,
   onRunFullPipeline,
+  onCancelFullPipeline,
   isPipelineRunning,
   onSaveWorkflow,
   onLoadWorkflow,
@@ -46,6 +51,7 @@ export const CanvasControls: React.FC<CanvasControlsProps> = ({
   onZoomOut,
   onResetZoom,
   onAutoLayout,
+  onZoomToFit,
 }) => {
   const fileInputRef = React.useRef<HTMLInputElement>(null);
 
@@ -60,6 +66,16 @@ export const CanvasControls: React.FC<CanvasControlsProps> = ({
           <Play className="w-3.5 h-3.5 fill-current animate-pulse-slow" />
           <span>{isPipelineRunning ? "Running Workflow..." : "Run Workflow"}</span>
         </button>
+
+        {isPipelineRunning && (
+          <button
+            onClick={onCancelFullPipeline}
+            title="Cancel running workflow"
+            className="flex h-7 w-7 items-center justify-center rounded-lg border border-rose-200 bg-white text-rose-600 shadow-sm transition-colors hover:bg-rose-50 hover:text-rose-700"
+          >
+            <X className="h-3.5 w-3.5" />
+          </button>
+        )}
 
         <button
           onClick={onSaveWorkflow}
@@ -142,7 +158,7 @@ export const CanvasControls: React.FC<CanvasControlsProps> = ({
           className="flex items-center space-x-1 px-3 py-1.5 border border-neutral-200 dark:border-neutral-800 hover:bg-neutral-50 dark:hover:bg-neutral-950 rounded-lg text-xs font-semibold text-neutral-700 dark:text-neutral-300 transition-colors"
         >
           <Trash2 className="w-3.5 h-3.5" />
-          <span>Wipe Canvas</span>
+          <span>Clear Canvas</span>
         </button>
       </div>
 
@@ -155,6 +171,14 @@ export const CanvasControls: React.FC<CanvasControlsProps> = ({
           className="p-1.5 hover:bg-neutral-50 border border-neutral-200 dark:border-neutral-800 dark:hover:bg-neutral-950 text-neutral-600 dark:text-neutral-400 rounded-md transition-colors"
         >
           <LayoutGrid className="w-3.5 h-3.5" />
+        </button>
+
+        <button
+          onClick={onZoomToFit}
+          title="Zoom to fit"
+          className="p-1.5 hover:bg-neutral-50 border border-neutral-200 dark:border-neutral-800 dark:hover:bg-neutral-950 text-neutral-600 dark:text-neutral-400 rounded-md transition-colors"
+        >
+          <Maximize2 className="w-3.5 h-3.5" />
         </button>
 
         <button

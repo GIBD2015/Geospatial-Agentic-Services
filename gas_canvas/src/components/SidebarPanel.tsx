@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import { 
   Database, 
   Map, 
@@ -30,11 +30,10 @@ interface SidebarPanelProps {
   servers: GasServerData[];
   onAddServer: (url: string) => void;
   onRemoveServer: (url: string) => void;
+  onRemoveAgent: (serverUrl: string, agentId: string) => void;
   onToggleServer: (url: string) => void;
   isSyncingServer: string | null;
   width: number;
-  selectedAgentId?: string | null;
-  selectedServerUrl?: string | null;
 }
 
 // Full specifications of the published agents fetched from GetCapabilities
@@ -152,16 +151,35 @@ export const SidebarPanel: React.FC<SidebarPanelProps> = ({
   servers,
   onAddServer,
   onRemoveServer,
+  onRemoveAgent,
   onToggleServer,
   isSyncingServer,
   width,
-  selectedAgentId,
-  selectedServerUrl,
 }) => {
   const [search, setSearch] = useState("");
   const [activeTab, setActiveTab] = useState<"all" | AgentCategory>("all");
   const [isUrlEditing, setIsUrlEditing] = useState(false);
   const [newServerUrl, setNewServerUrl] = useState("https://www.geospatial-agentic-services.online/");
+  const [agentContextMenu, setAgentContextMenu] = useState<{
+    serverUrl: string;
+    agentId: string;
+    name: string;
+    x: number;
+    y: number;
+  } | null>(null);
+
+  useEffect(() => {
+    if (!agentContextMenu) return;
+
+    const closeMenu = () => setAgentContextMenu(null);
+    window.addEventListener("pointerdown", closeMenu);
+    window.addEventListener("blur", closeMenu);
+
+    return () => {
+      window.removeEventListener("pointerdown", closeMenu);
+      window.removeEventListener("blur", closeMenu);
+    };
+  }, [agentContextMenu]);
 
   return (
     <div style={{ width: `${width}px` }} className="border-r border-neutral-200 dark:border-neutral-800 bg-neutral-50/50 dark:bg-neutral-950 flex flex-col h-full shrink-0">
@@ -271,11 +289,11 @@ export const SidebarPanel: React.FC<SidebarPanelProps> = ({
             return (
               <div key={server.url} className="bg-white dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-800 rounded-lg overflow-hidden">
                 <div 
-                  className="px-3 py-2.5 flex items-center justify-between bg-neutral-100 dark:bg-neutral-900 cursor-pointer border-b border-neutral-200/70 dark:border-neutral-800"
+                  className="px-3 py-2.5 flex items-center justify-between bg-neutral-200/70 dark:bg-neutral-850 cursor-pointer border-b border-neutral-300 dark:border-neutral-800"
                   onClick={() => onToggleServer(server.url)}
                 >
                   <div className="flex items-center space-x-2 min-w-0">
-                    {server.isExpanded ? <ChevronDown className="w-3.5 h-3.5 text-neutral-400" /> : <ChevronRight className="w-3.5 h-3.5 text-neutral-400" />}
+                    {server.isExpanded ? <ChevronDown className="h-[18px] w-[18px] text-neutral-500" /> : <ChevronRight className="h-[18px] w-[18px] text-neutral-500" />}
                     <Server className="w-4 h-4 text-sky-600 shrink-0" />
                     <span
                       className="text-sm font-semibold text-neutral-800 dark:text-neutral-200 truncate"
@@ -305,20 +323,42 @@ export const SidebarPanel: React.FC<SidebarPanelProps> = ({
                     ) : (
                       filteredAgents.map((tpl) => {
                         const { bg, border, iconColor, icon: Icon } = getAgentAesthetics(tpl.agent_id);
-                        const isSelected = selectedAgentId === tpl.agent_id && selectedServerUrl === server.url;
                         return (
                           <div
                             key={tpl.agent_id}
-                            onClick={() => onDescribeAgent(server.url, tpl.agent_id)}
+                            draggable
+                            onDragStart={(e) => {
+                              if ((e.target as HTMLElement).closest("button")) {
+                                e.preventDefault();
+                                return;
+                              }
+                              e.dataTransfer.effectAllowed = "copy";
+                              e.dataTransfer.setData(
+                                "application/x-gas-agent",
+                                JSON.stringify({
+                                  agentId: tpl.agent_id,
+                                  name: tpl.name,
+                                  serverUrl: server.url
+                                })
+                              );
+                              e.dataTransfer.setData("text/plain", tpl.name);
+                            }}
+                            onContextMenu={(e) => {
+                              e.preventDefault();
+                              e.stopPropagation();
+                              setAgentContextMenu({
+                                serverUrl: server.url,
+                                agentId: tpl.agent_id,
+                                name: tpl.name,
+                                x: e.clientX,
+                                y: e.clientY
+                              });
+                            }}
                             onDoubleClick={(e) => {
                               e.stopPropagation();
                               onAddAgent(tpl.agent_id, tpl.name, server.url);
                             }}
-                            className={`p-2.5 rounded-lg border bg-white dark:bg-neutral-900/60 cursor-pointer shadow-none transition-all relative overflow-hidden group ${
-                              isSelected 
-                                ? "border-sky-500 ring-1 ring-sky-500/50 shadow-sm" 
-                                : "border-neutral-100 hover:border-sky-200 dark:border-neutral-800 dark:hover:border-neutral-700 hover:shadow-xs"
-                            }`}
+                            className="p-2.5 rounded-lg border bg-white dark:bg-neutral-900/60 cursor-grab active:cursor-grabbing shadow-none transition-all relative overflow-hidden group border-neutral-100 hover:border-sky-200 dark:border-neutral-800 dark:hover:border-neutral-700 hover:shadow-xs"
                           >
                             <div className="flex items-start justify-between gap-1">
                               <div className="flex items-start space-x-2 overflow-hidden flex-1">
@@ -380,6 +420,48 @@ export const SidebarPanel: React.FC<SidebarPanelProps> = ({
           GIBD
         </a>
       </div>
+
+      {agentContextMenu && (
+        <div
+          onPointerDown={(event) => event.stopPropagation()}
+          className="fixed z-[950] w-44 overflow-hidden rounded-lg border border-neutral-200 bg-white text-xs shadow-xl"
+          style={{ left: agentContextMenu.x, top: agentContextMenu.y }}
+        >
+          <button
+            type="button"
+            onClick={() => {
+              onAddAgent(agentContextMenu.agentId, agentContextMenu.name, agentContextMenu.serverUrl);
+              setAgentContextMenu(null);
+            }}
+            className="flex w-full items-center gap-2 px-3 py-2 text-left font-semibold text-neutral-700 hover:bg-neutral-50"
+          >
+            <Plus className="h-3.5 w-3.5 text-sky-600" />
+            <span>Add to Canvas</span>
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              onDescribeAgent(agentContextMenu.serverUrl, agentContextMenu.agentId);
+              setAgentContextMenu(null);
+            }}
+            className="flex w-full items-center gap-2 px-3 py-2 text-left font-semibold text-neutral-700 hover:bg-neutral-50"
+          >
+            <Info className="h-3.5 w-3.5 text-sky-600" />
+            <span>View Details</span>
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              onRemoveAgent(agentContextMenu.serverUrl, agentContextMenu.agentId);
+              setAgentContextMenu(null);
+            }}
+            className="flex w-full items-center gap-2 px-3 py-2 text-left font-semibold text-rose-600 hover:bg-rose-50"
+          >
+            <Trash2 className="h-3.5 w-3.5" />
+            <span>Delete</span>
+          </button>
+        </div>
+      )}
     </div>
   );
 };

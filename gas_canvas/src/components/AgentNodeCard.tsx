@@ -21,6 +21,23 @@ import {
 import { AgentNode, TaskArtifact } from "../types";
 import { getArtifactFilename, getArtifactHoverText, getArtifactSelectionKey, getArtifactSemanticName } from "../lib/artifacts";
 
+const AnalysisLayersIcon: React.FC<React.SVGProps<SVGSVGElement>> = ({ className, ...props }) => (
+  <svg
+    viewBox="0 0 24 24"
+    fill="none"
+    stroke="currentColor"
+    strokeWidth="2.2"
+    strokeLinecap="round"
+    strokeLinejoin="round"
+    className={className}
+    {...props}
+  >
+    <path d="M12 3.5 21 8 12 12.5 3 8 12 3.5Z" />
+    <path d="m3 13 9 4.5 9-4.5" />
+    <path d="m3 17.5 9 4.5 9-4.5" />
+  </svg>
+);
+
 export interface AgentNodeCardProps {
   node: AgentNode;
   isSelected: boolean;
@@ -34,8 +51,11 @@ export interface AgentNodeCardProps {
   onOpenArtifact?: (artifact: TaskArtifact) => void;
   outputsExpanded?: boolean;
   onOutputsExpandedChange?: (nodeId: string, expanded: boolean) => void;
+  renameRequestId?: number;
+  editInstructionsRequestId?: number;
   onPointerDown: (e: React.PointerEvent) => void;
   onNodePointerUp?: (nodeId: string) => void;
+  onContextMenu?: (nodeId: string, e: React.MouseEvent) => void;
   onPortPointerDown: (nodeId: string, type: "input" | "output", e: React.PointerEvent, artifactName?: string) => void;
   onPortPointerUp: (nodeId: string, type: "input" | "output") => void;
   isConnectingSource: boolean;
@@ -77,7 +97,7 @@ export const getAgentAesthetics = (agentId: string) => {
       selectedBorder: "border-sky-500 ring-2 ring-sky-500/20",
       iconColor: "text-sky-600 dark:text-sky-400",
       badgeBg: "bg-sky-100 text-sky-800 dark:bg-sky-900/30 dark:text-sky-300",
-      icon: Activity,
+      icon: AnalysisLayersIcon,
       category
     };
   }
@@ -130,8 +150,11 @@ export const AgentNodeCard: React.FC<AgentNodeCardProps> = ({
   onOpenArtifact,
   outputsExpanded,
   onOutputsExpandedChange,
+  renameRequestId = 0,
+  editInstructionsRequestId = 0,
   onPointerDown,
   onNodePointerUp,
+  onContextMenu,
   onPortPointerDown,
   onPortPointerUp,
   isConnectingSource,
@@ -166,6 +189,16 @@ export const AgentNodeCard: React.FC<AgentNodeCardProps> = ({
       nameInputRef.current?.select();
     }
   }, [isEditingName]);
+
+  useEffect(() => {
+    if (!renameRequestId) return;
+    setIsEditingName(true);
+  }, [renameRequestId]);
+
+  useEffect(() => {
+    if (!editInstructionsRequestId) return;
+    setIsEditingInstructions(true);
+  }, [editInstructionsRequestId]);
 
   useEffect(() => {
     if (isEditingInstructions) {
@@ -290,6 +323,7 @@ export const AgentNodeCard: React.FC<AgentNodeCardProps> = ({
           onNodePointerUp(node.id);
         }
       }}
+      onContextMenu={(e) => onContextMenu?.(node.id, e)}
     >
       {/* Sockets/Ports */}
       {/* Input Socket (Left Pin) */}

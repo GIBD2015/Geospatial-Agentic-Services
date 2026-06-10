@@ -293,27 +293,27 @@ export const AgentDescribePanel: React.FC<AgentDescribePanelProps> = ({ agentInf
 
   return (
     <div style={{ width: `${width}px` }} className="flex h-full shrink-0 flex-col overflow-hidden border-l border-neutral-200 bg-white shadow-xl">
-      <div className="flex items-start justify-between border-b border-neutral-100 bg-white p-5">
+      <div className="flex items-start justify-between border-b border-neutral-100 bg-white px-5 py-2.5">
         <div className="min-w-0 pr-3">
-          <h4 className="truncate text-xl font-bold tracking-tight text-neutral-950" title={title}>
+          <h4 className="truncate text-[13px] font-bold leading-tight text-neutral-800" title={title}>
             {title}
           </h4>
           {metaParts.length > 0 && (
-            <p className="mt-1 text-[12px] text-neutral-500">{metaParts.join(" · ")}</p>
+            <p className="mt-0.5 text-[11px] leading-tight text-neutral-500">{metaParts.join(" · ")}</p>
           )}
         </div>
         <button
           onClick={onClose}
-          className="shrink-0 rounded-full bg-neutral-100 p-2 text-neutral-500 transition-colors hover:bg-neutral-200 hover:text-neutral-800"
+          className="shrink-0 rounded-full bg-neutral-100 p-1.5 text-neutral-500 transition-colors hover:bg-neutral-200 hover:text-neutral-800"
           aria-label="Close agent information"
         >
-          <X className="h-4 w-4" />
+          <X className="h-3.5 w-3.5" />
         </button>
       </div>
 
-      <div className="flex-1 space-y-5 overflow-y-auto p-5">
+      <div className="flex-1 space-y-3 overflow-y-auto px-5 py-3">
         {profile.description && (
-          <p className="text-[14px] leading-relaxed text-neutral-700">{profile.description}</p>
+          <p className="text-[13px] leading-6 text-neutral-700">{profile.description}</p>
         )}
 
         <FactsSection
