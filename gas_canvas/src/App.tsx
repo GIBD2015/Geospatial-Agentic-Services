@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useMemo, useRef } from "react";
+import { flushSync } from "react-dom";
 import {
   Network,
   Settings,
@@ -985,12 +986,13 @@ export default function App() {
     const nextZoom = Math.min(MAX_MANUAL_ZOOM, Math.max(MIN_MANUAL_ZOOM, currentZoom * zoomFactor));
 
     zoomRef.current = nextZoom;
-    setIsWheelZooming(true);
-    setZoom(nextZoom);
-    window.setTimeout(() => {
-      container.scrollLeft = canvasX * nextZoom - viewportX;
-      container.scrollTop = canvasY * nextZoom - viewportY;
-    }, 0);
+    flushSync(() => {
+      setIsWheelZooming(true);
+      setZoom(nextZoom);
+    });
+    container.scrollLeft = canvasX * nextZoom - viewportX;
+    container.scrollTop = canvasY * nextZoom - viewportY;
+    updateCanvasViewportSnapshot();
 
     if (wheelZoomTimeoutRef.current) {
       window.clearTimeout(wheelZoomTimeoutRef.current);
@@ -2945,10 +2947,11 @@ export default function App() {
                 </div>
               )}
 
+              </div>
               {/* Quick empty canvas action helper board */}
               {nodes.length === 0 && (
-                <div className="absolute inset-0 flex items-center justify-center p-8 pointer-events-none select-none">
-                  <div className="text-center space-y-4 max-w-sm bg-white/70 dark:bg-neutral-900/60 backdrop-blur-md p-6 rounded-2xl border border-neutral-200/50 shadow-sm">
+                <div className="pointer-events-none absolute inset-x-0 bottom-0 top-[44px] z-30 flex items-center justify-center p-8 select-none">
+                  <div className="max-w-sm space-y-4 rounded-2xl border border-neutral-200/50 bg-white/80 p-6 text-center shadow-sm backdrop-blur-md dark:bg-neutral-900/70">
                     <Network className="w-12 h-12 text-sky-400 mx-auto animate-bounce-slow" />
                     <h3 className="text-sm font-bold text-neutral-800 dark:text-neutral-100">
                       Empty Workflow Canvas
@@ -2962,7 +2965,6 @@ export default function App() {
                   </div>
                 </div>
               )}
-              </div>
               {nodes.length > 0 && minimapBounds && (
                 <div className="absolute bottom-0 right-0 z-40 rounded-tl-lg border border-b-0 border-r-0 border-neutral-200 bg-white/95 p-1.5 shadow-lg backdrop-blur dark:border-neutral-800 dark:bg-neutral-900/95">
                   <div className="mb-1 flex items-center justify-between gap-3 px-0.5">
