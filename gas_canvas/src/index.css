@@ -33,3 +33,17 @@ body,
     opacity: 1;
   }
 }
+
+@keyframes gasFlowPath {
+  from {
+    stroke-dashoffset: 28;
+  }
+  to {
+    stroke-dashoffset: 0;
+  }
+}
+
+.gas-flow-path {
+  animation: gasFlowPath 0.7s linear infinite;
+  filter: drop-shadow(0 0 4px rgba(14, 165, 233, 0.42));
+}
