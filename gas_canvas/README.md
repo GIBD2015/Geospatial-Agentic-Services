@@ -5,7 +5,18 @@ GAS Canvas is the workflow-building interface for Geospatial Agentic Services.
 It lets users discover GAS agents, compose them into multi-agent workflows,
 execute tasks, and inspect generated artifacts in persistent workspace tabs.
 
+![GAS Canvas workflow workspace](../docs/assets/gas-canvas-workflow-overview.png)
+
+The workspace combines the GAS Servers agent list, workflow canvas, execution
+controls, mini-map overview, and agent inspector in one persistent interface.
+
 ## Run Locally
+
+Public GAS Canvas deployment:
+
+```text
+https://www.geospatial-agentic-services.online/canvas
+```
 
 From the `gas_canvas` folder:
 
@@ -58,14 +69,56 @@ another node.
 
 Navigation:
 
+- Drag agents from the GAS Servers panel onto the canvas, or double-click an
+  agent in the list to add it near the current viewport.
 - Drag empty canvas space to pan the workflow.
 - Use the mouse wheel to zoom in and out around the cursor.
-- Use the toolbar zoom buttons for explicit zoom controls.
+- Use the toolbar zoom buttons for explicit zoom controls, zoom-to-fit, reset
+  zoom, and auto-layout.
 - Drag a node to reposition it.
 - Drag from input/output ports to create dataset connections.
 
 The canvas keeps scroll behavior internally for panning and zoom math, but the
 visible scrollbars are hidden.
+
+Toolbar workflow actions:
+
+- `Run Workflow`: executes the connected graph in dependency order.
+- `Cancel Workflow`: appears while a workflow is running and cancels active
+  tasks while marking waiting tasks as canceled.
+- `Workflow`: opens save, load-from-storage, and import-from-file actions.
+- `Clear Canvas`: removes the current graph after confirmation.
+- `Auto Layout`: arranges nodes by dependency depth and zooms to fit.
+- `Zoom to Fit`: centers and scales the current graph without rearranging
+  nodes.
+
+Manual zoom, auto-layout, and zoom-to-fit support zooming down to 10 percent
+for large workflows.
+
+Saved and imported workflows are centered automatically after loading so the
+graph is visible in the canvas viewport.
+
+Workflow overview:
+
+- A compact status strip below the toolbar summarizes counts such as
+  `3 running · 4 completed`.
+- The lower-right mini-map shows node positions, connections, and the current
+  viewport.
+- Drag the blue mini-map viewport rectangle to pan the main canvas.
+- Use the mini-map corner control to collapse or expand the overview.
+
+Context menus:
+
+- Right-click an agent node to run, duplicate, copy, rename, edit task
+  instructions, view details, or delete it.
+- Right-click empty canvas space to paste, run or cancel the workflow, save,
+  load, import, auto-layout, zoom, or clear the canvas.
+- Right-click a connection to delete it.
+- Right-click an agent in the GAS Servers panel to add it to the canvas, view
+  details, or remove it from the visible list.
+
+Context menus are clamped to the browser viewport so they remain visible near
+screen edges.
 
 ## Running Agents
 
@@ -77,6 +130,17 @@ Select an agent node to open the inspector. The inspector lets users:
 - Run or cancel node execution.
 - Watch the execution console stream.
 - Inspect output artifacts and response JSON.
+
+Single-agent runs respect workflow dependencies. If an agent has connected
+upstream parents, its `Run Agent` button is disabled until all parent agents
+complete, and the tooltip explains which upstream agents are blocking it.
+
+When an agent is rerun, GAS Canvas clears the previous run's streaming logs,
+task request, task id, and output artifacts before starting the new stream.
+
+During workflow execution, incoming connections to the currently running node
+are highlighted with a stronger animated path so the active dependency path is
+easy to follow.
 
 Use `View All Artifacts` to route all artifacts from a completed node into the
 appropriate workspace tabs. If spatial artifacts are present, the Map tab is

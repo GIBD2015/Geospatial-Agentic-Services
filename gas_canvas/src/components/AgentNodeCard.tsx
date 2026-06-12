@@ -46,6 +46,7 @@ export interface AgentNodeCardProps {
   onSelect: () => void;
   onDelete: () => void;
   onExecute: () => void;
+  runDisabledReason?: string;
   onCancel: () => void;
   onUpdateNode: (nodeId: string, updates: Partial<AgentNode>) => void;
   onOpenArtifact?: (artifact: TaskArtifact) => void;
@@ -145,6 +146,7 @@ export const AgentNodeCard: React.FC<AgentNodeCardProps> = ({
   onSelect,
   onDelete,
   onExecute,
+  runDisabledReason,
   onCancel,
   onUpdateNode,
   onOpenArtifact,
@@ -631,10 +633,13 @@ export const AgentNodeCard: React.FC<AgentNodeCardProps> = ({
           <div className="flex items-center space-x-1.5">
             <button
               onClick={onExecute}
-              disabled={node.status === "running"}
+              disabled={node.status === "running" || Boolean(runDisabledReason)}
+              title={runDisabledReason || (node.status === "running" ? "Agent is currently streaming." : "Run this agent")}
               className={`no-drag flex items-center space-x-1 px-3 py-1.5 text-white rounded-lg text-xs font-semibold shadow-sm transition-colors disabled:cursor-default ${
                 node.status === "running"
                   ? "bg-emerald-600 hover:bg-emerald-600"
+                  : runDisabledReason
+                    ? "bg-neutral-300 text-neutral-500 hover:bg-neutral-300"
                   : "bg-sky-600 hover:bg-sky-500"
               }`}
             >

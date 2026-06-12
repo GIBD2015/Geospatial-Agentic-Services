@@ -29,6 +29,8 @@ import {
   LayoutGrid,
   Maximize2,
   X,
+  ChevronsDownUp,
+  ChevronsUpDown,
   Copy,
   ClipboardPaste,
   CopyPlus,
@@ -90,9 +92,19 @@ const DEFAULT_TASK_INSTRUCTIONS = "No task instructions defined yet. Double clic
 const CANVAS_SIZE = 8000;
 const NODE_CARD_WIDTH = 280;
 const NODE_CARD_HEIGHT = 260;
+const NODE_CONNECTION_PORT_Y = 115;
+const MIN_FIT_ZOOM = 0.1;
+const MAX_FIT_ZOOM = 1.2;
+const MIN_MANUAL_ZOOM = 0.1;
+const MAX_MANUAL_ZOOM = 1.5;
 
 const isPlaceholderInstruction = (instructions: string) =>
   !instructions.trim() || instructions.trim() === DEFAULT_TASK_INSTRUCTIONS;
+
+const getClampedMenuPosition = (clientX: number, clientY: number, width: number, height: number, margin = 8) => ({
+  x: Math.min(Math.max(margin, clientX), window.innerWidth - width - margin),
+  y: Math.min(Math.max(margin, clientY), window.innerHeight - height - margin)
+});
 
 const getTaskResultError = (result: TaskResult & { success?: boolean }) => {
   const status = String(result.status || "").toLowerCase();
@@ -386,6 +398,13 @@ export default function App() {
     scrollTop: 0,
     hasValue: false
   });
+  const [canvasViewport, setCanvasViewport] = useState({
+    scrollLeft: 0,
+    scrollTop: 0,
+    width: 0,
+    height: 0
+  });
+  const [isMinimapCollapsed, setIsMinimapCollapsed] = useState(false);
 
   // Dragging states
   const [dragNodeId, setDragNodeId] = useState<string | null>(null);
@@ -424,13 +443,27 @@ export default function App() {
     });
   };
 
-  const saveCanvasViewport = () => {
+  const updateCanvasViewportSnapshot = () => {
     const container = canvasScrollRef.current;
-    if (!container) return;
+    if (!container) return null;
 
-    savedCanvasViewportRef.current = {
+    const snapshot = {
       scrollLeft: container.scrollLeft,
       scrollTop: container.scrollTop,
+      width: container.clientWidth,
+      height: container.clientHeight
+    };
+    setCanvasViewport(snapshot);
+    return snapshot;
+  };
+
+  const saveCanvasViewport = () => {
+    const snapshot = updateCanvasViewportSnapshot();
+    if (!snapshot) return;
+
+    savedCanvasViewportRef.current = {
+      scrollLeft: snapshot.scrollLeft,
+      scrollTop: snapshot.scrollTop,
       hasValue: true
     };
   };
@@ -459,9 +492,9 @@ export default function App() {
     const graphWidth = Math.max(1, bounds.maxX - bounds.minX) + padding * 2;
     const graphHeight = Math.max(1, bounds.maxY - bounds.minY) + padding * 2;
     const fitZoom = Math.min(
-      1.2,
+      MAX_FIT_ZOOM,
       Math.max(
-        0.4,
+        MIN_FIT_ZOOM,
         Math.min(
           container.clientWidth / graphWidth,
           container.clientHeight / graphHeight
@@ -480,6 +513,51 @@ export default function App() {
         behavior
       });
     });
+  };
+
+  const centerWorkflowNodesForViewport = (workflowNodes: AgentNode[]) => {
+    const container = canvasScrollRef.current;
+    if (!container || workflowNodes.length === 0) return workflowNodes;
+
+    const bounds = workflowNodes.reduce(
+      (acc, node) => ({
+        minX: Math.min(acc.minX, node.x),
+        minY: Math.min(acc.minY, node.y),
+        maxX: Math.max(acc.maxX, node.x + NODE_CARD_WIDTH),
+        maxY: Math.max(acc.maxY, node.y + NODE_CARD_HEIGHT)
+      }),
+      { minX: Infinity, minY: Infinity, maxX: -Infinity, maxY: -Infinity }
+    );
+    if (!Number.isFinite(bounds.minX)) return workflowNodes;
+
+    const padding = 100;
+    const graphWidth = Math.max(1, bounds.maxX - bounds.minX) + padding * 2;
+    const graphHeight = Math.max(1, bounds.maxY - bounds.minY) + padding * 2;
+    const fitZoom = Math.min(
+      MAX_FIT_ZOOM,
+      Math.max(
+        MIN_FIT_ZOOM,
+        Math.min(
+          container.clientWidth / graphWidth,
+          container.clientHeight / graphHeight
+        )
+      )
+    );
+    const nextZoom = Number.isFinite(fitZoom) ? fitZoom : zoomRef.current;
+    const graphCenterX = (bounds.minX + bounds.maxX) / 2;
+    const graphCenterY = (bounds.minY + bounds.maxY) / 2;
+    const targetCenterX = container.clientWidth / (2 * nextZoom);
+    const targetCenterY = container.clientHeight / (2 * nextZoom);
+    const offsetX = Math.max(0, targetCenterX - graphCenterX);
+    const offsetY = Math.max(0, targetCenterY - graphCenterY);
+
+    if (offsetX === 0 && offsetY === 0) return workflowNodes;
+
+    return workflowNodes.map((node) => ({
+      ...node,
+      x: Math.min(CANVAS_SIZE - NODE_CARD_WIDTH, node.x + offsetX),
+      y: Math.min(CANVAS_SIZE - NODE_CARD_HEIGHT, node.y + offsetY)
+    }));
   };
 
   // Port connection draft states
@@ -788,6 +866,7 @@ export default function App() {
   const handleNodeContextMenu = (nodeId: string, e: React.MouseEvent) => {
     e.preventDefault();
     e.stopPropagation();
+    const position = getClampedMenuPosition(e.clientX, e.clientY, 176, 288);
     setSelectedNodeId(nodeId);
     setSelectedDescribeAgentInfo(null);
     setSelectedConnectionId(null);
@@ -795,8 +874,8 @@ export default function App() {
     setCanvasContextMenu(null);
     setNodeContextMenu({
       nodeId,
-      x: e.clientX,
-      y: e.clientY
+      x: position.x,
+      y: position.y
     });
   };
 
@@ -807,14 +886,15 @@ export default function App() {
 
     e.preventDefault();
     const canvasRect = canvasRef.current.getBoundingClientRect();
+    const position = getClampedMenuPosition(e.clientX, e.clientY, 192, 520);
     setSelectedNodeId(null);
     setSelectedDescribeAgentInfo(null);
     setSelectedConnectionId(null);
     setConnectionContextMenu(null);
     setNodeContextMenu(null);
     setCanvasContextMenu({
-      x: e.clientX,
-      y: e.clientY,
+      x: position.x,
+      y: position.y,
       canvasX: (e.clientX - canvasRect.left) / zoom,
       canvasY: (e.clientY - canvasRect.top) / zoom
     });
@@ -835,7 +915,7 @@ export default function App() {
     const canvasX = (container.scrollLeft + viewportX) / currentZoom;
     const canvasY = (container.scrollTop + viewportY) / currentZoom;
     const zoomFactor = Math.exp(-e.deltaY * 0.001);
-    const nextZoom = Math.min(1.5, Math.max(0.3, currentZoom * zoomFactor));
+    const nextZoom = Math.min(MAX_MANUAL_ZOOM, Math.max(MIN_MANUAL_ZOOM, currentZoom * zoomFactor));
 
     zoomRef.current = nextZoom;
     setIsWheelZooming(true);
@@ -860,11 +940,22 @@ export default function App() {
     const container = canvasScrollRef.current;
     if (!container) return;
 
+    updateCanvasViewportSnapshot();
     container.addEventListener("wheel", handleCanvasWheel, { passive: false });
     return () => {
       container.removeEventListener("wheel", handleCanvasWheel);
     };
   }, [activeWorkspaceTab]);
+
+  useEffect(() => {
+    if (activeWorkspaceTab !== "canvas") return;
+
+    const updateSnapshot = () => updateCanvasViewportSnapshot();
+    updateSnapshot();
+    window.addEventListener("resize", updateSnapshot);
+
+    return () => window.removeEventListener("resize", updateSnapshot);
+  }, [activeWorkspaceTab, zoom, sidebarWidth, inspectorWidth, isSidebarVisible, isInspectorVisible]);
 
   useEffect(() => {
     if (activeWorkspaceTab !== "canvas") return;
@@ -1154,6 +1245,21 @@ export default function App() {
 
   // --- PIPELINE RUNNER ENGINE (SEQUENTIAL TOP-SORT DAG ORCHESTRATION) ---
 
+  const getRunDisabledReason = (nodeId: string) => {
+    const activeNodes = nodesRef.current;
+    const parentLinks = connectionsRef.current.filter((c) => c.targetId === nodeId);
+    const unfinishedParents = parentLinks
+      .map((link) => activeNodes.find((n) => n.id === link.sourceId))
+      .filter((parent): parent is AgentNode => !parent || parent.status !== "completed");
+
+    if (unfinishedParents.length === 0) return "";
+
+    const upstreamNames = unfinishedParents
+      .map((parent) => parent?.name || "an upstream agent")
+      .join(", ");
+    return `Waiting for upstream agent${unfinishedParents.length > 1 ? "s" : ""} to finish: ${upstreamNames}.`;
+  };
+
   // Executes a single node's task proxying the stream of progress events to its logs
   const executeSingleNode = async (nodeId: string, isAutomatedRun: boolean = false): Promise<TaskResult | null> => {
     const activeNodes = nodesRef.current;
@@ -1164,15 +1270,10 @@ export default function App() {
     const template = AGENT_TEMPLATES.find((tpl) => tpl.agent_id === node.agentId);
     const streamAgentName = template?.name || node.name;
     const parentLinks = activeConnections.filter((c) => c.targetId === nodeId);
-    const unfinishedParents = parentLinks
-      .map((link) => activeNodes.find((n) => n.id === link.sourceId))
-      .filter((parent): parent is AgentNode => !parent || parent.status !== "completed");
+    const disabledReason = getRunDisabledReason(nodeId);
 
-    if (unfinishedParents.length > 0) {
-      const upstreamNames = unfinishedParents
-        .map((parent) => parent?.name || "an upstream agent")
-        .join(", ");
-      const message = `Cannot run this agent yet. Waiting for upstream agent${unfinishedParents.length > 1 ? "s" : ""} to finish: ${upstreamNames}.`;
+    if (disabledReason) {
+      const message = `Cannot run this agent yet. ${disabledReason}`;
       const blockedNodes = nodesRef.current.map((n) => {
         if (n.id === nodeId) {
           return {
@@ -1956,16 +2057,17 @@ export default function App() {
     Array.isArray(value.connections);
 
   const loadWorkflowIntoCanvas = (workflow: SavedWorkflow) => {
-    nodesRef.current = workflow.nodes;
+    const centeredNodes = centerWorkflowNodesForViewport(workflow.nodes);
+    nodesRef.current = centeredNodes;
     connectionsRef.current = workflow.connections;
     setActiveWorkspaceTab("canvas");
-    setNodes(workflow.nodes);
+    setNodes(centeredNodes);
     setConnections(workflow.connections);
     setSelectedDescribeAgentInfo(null);
     setSelectedConnectionId(null);
-    setSelectedNodeId(workflow.nodes.length > 0 ? workflow.nodes[0].id : null);
+    setSelectedNodeId(centeredNodes.length > 0 ? centeredNodes[0].id : null);
     window.requestAnimationFrame(() => {
-      focusCanvasOnNodes(workflow.nodes);
+      focusCanvasOnNodes(centeredNodes);
     });
   };
 
@@ -2223,29 +2325,11 @@ export default function App() {
       y: n.y + yOffset
     }));
 
+    nodesRef.current = finalNodes;
     setNodes(finalNodes);
-
-    if (canvasRef.current && minX !== Infinity) {
-      // Find the scroll container (parent of canvasRef)
-      const container = canvasRef.current.parentElement;
-      if (container) {
-        container.scrollTo({ top: 0, left: 0, behavior: 'smooth' });
-      }
-
-      const padding = 100;
-      const graphW = (maxX - minX) + padding * 2;
-      const graphH = (maxY - minY) + padding * 2;
-
-      const canvasW = canvasRef.current.parentElement?.clientWidth || window.innerWidth;
-      const canvasH = canvasRef.current.parentElement?.clientHeight || window.innerHeight;
-
-      // Ensure graph fits in view area
-      const zoomX = canvasW / Math.max(1, graphW);
-      const zoomY = canvasH / Math.max(1, graphH);
-
-      const newZoom = Math.min(Math.max(0.4, Math.min(zoomX, zoomY)), 1.2);
-      setZoom(newZoom);
-    }
+    window.requestAnimationFrame(() => {
+      focusCanvasOnNodes(finalNodes);
+    });
 
     showToast("Canvas auto-arranged and zoomed to fit.");
   };
@@ -2270,6 +2354,103 @@ export default function App() {
   // Render variables helper
   const selectedNode = nodes.find((n) => n.id === selectedNodeId) || null;
   const nodeContextMenuNode = nodeContextMenu ? nodes.find((node) => node.id === nodeContextMenu.nodeId) || null : null;
+  const workflowStatusCounts = nodes.reduce<Partial<Record<AgentNode["status"], number>>>((counts, node) => {
+    counts[node.status] = (counts[node.status] || 0) + 1;
+    return counts;
+  }, {});
+  const allWorkflowStatusItems: Array<{ status: AgentNode["status"]; label: string; dot: string }> = [
+    { status: "running", label: "running", dot: "bg-sky-500 animate-pulse" },
+    { status: "completed", label: "completed", dot: "bg-emerald-500" },
+    { status: "waiting", label: "waiting", dot: "bg-neutral-400" },
+    { status: "error", label: "error", dot: "bg-rose-500" },
+    { status: "canceled", label: "canceled", dot: "bg-amber-500" },
+    { status: "idle", label: "idle", dot: "bg-neutral-300" }
+  ];
+  const workflowStatusItems = allWorkflowStatusItems.filter((item) => (workflowStatusCounts[item.status] || 0) > 0);
+  const minimapWidth = 190;
+  const minimapHeight = 124;
+  const minimapPadding = 4;
+  const visibleCanvasViewport = {
+    x: canvasViewport.scrollLeft / zoom,
+    y: canvasViewport.scrollTop / zoom,
+    width: canvasViewport.width / zoom,
+    height: canvasViewport.height / zoom
+  };
+  const minimapGraphBounds = nodes.length > 0
+    ? nodes.reduce(
+        (acc, node) => ({
+          minX: Math.min(acc.minX, node.x),
+          minY: Math.min(acc.minY, node.y),
+          maxX: Math.max(acc.maxX, node.x + NODE_CARD_WIDTH),
+          maxY: Math.max(acc.maxY, node.y + NODE_CARD_HEIGHT)
+        }),
+        { minX: Infinity, minY: Infinity, maxX: -Infinity, maxY: -Infinity }
+      )
+    : null;
+  const minimapContextPadding = 180;
+  const minimapBounds = minimapGraphBounds
+    ? {
+        minX: Math.max(0, minimapGraphBounds.minX - minimapContextPadding),
+        minY: Math.max(0, minimapGraphBounds.minY - minimapContextPadding),
+        maxX: Math.min(CANVAS_SIZE, minimapGraphBounds.maxX + minimapContextPadding),
+        maxY: Math.min(CANVAS_SIZE, minimapGraphBounds.maxY + minimapContextPadding)
+      }
+    : null;
+  const minimapScale = minimapBounds
+    ? Math.min(
+        (minimapWidth - minimapPadding * 2) / Math.max(1, minimapBounds.maxX - minimapBounds.minX),
+        (minimapHeight - minimapPadding * 2) / Math.max(1, minimapBounds.maxY - minimapBounds.minY)
+      )
+    : 1;
+  const minimapContentWidth = minimapBounds ? (minimapBounds.maxX - minimapBounds.minX) * minimapScale : 0;
+  const minimapContentHeight = minimapBounds ? (minimapBounds.maxY - minimapBounds.minY) * minimapScale : 0;
+  const minimapOffsetX = minimapPadding + Math.max(0, (minimapWidth - minimapPadding * 2 - minimapContentWidth) / 2);
+  const minimapOffsetY = minimapPadding + Math.max(0, (minimapHeight - minimapPadding * 2 - minimapContentHeight) / 2);
+  const toMinimapX = (x: number) => minimapBounds ? minimapOffsetX + (x - minimapBounds.minX) * minimapScale : 0;
+  const toMinimapY = (y: number) => minimapBounds ? minimapOffsetY + (y - minimapBounds.minY) * minimapScale : 0;
+  const clampToMinimapBounds = (x: number, y: number) => {
+    if (!minimapBounds) return { x, y };
+
+    return {
+      x: Math.min(minimapBounds.maxX, Math.max(minimapBounds.minX, x)),
+      y: Math.min(minimapBounds.maxY, Math.max(minimapBounds.minY, y))
+    };
+  };
+  const minimapViewportWidth = Math.max(8, visibleCanvasViewport.width * minimapScale);
+  const minimapViewportHeight = Math.max(8, visibleCanvasViewport.height * minimapScale);
+  const minimapViewportX = toMinimapX(visibleCanvasViewport.x);
+  const minimapViewportY = toMinimapY(visibleCanvasViewport.y);
+  const scrollCanvasToMinimapPoint = (svgElement: SVGSVGElement, clientX: number, clientY: number) => {
+    if (!minimapBounds || !canvasScrollRef.current) return;
+
+    const rect = svgElement.getBoundingClientRect();
+    const canvasPoint = clampToMinimapBounds(
+      minimapBounds.minX + (clientX - rect.left - minimapOffsetX) / minimapScale,
+      minimapBounds.minY + (clientY - rect.top - minimapOffsetY) / minimapScale
+    );
+
+    canvasScrollRef.current.scrollTo({
+      left: Math.max(0, canvasPoint.x * zoom - canvasScrollRef.current.clientWidth / 2),
+      top: Math.max(0, canvasPoint.y * zoom - canvasScrollRef.current.clientHeight / 2),
+      behavior: "auto"
+    });
+  };
+  const handleMinimapViewportPointerDown = (e: React.PointerEvent<SVGRectElement>) => {
+    e.preventDefault();
+    e.stopPropagation();
+    const svgElement = e.currentTarget.ownerSVGElement;
+    if (!svgElement) return;
+
+    e.currentTarget.setPointerCapture(e.pointerId);
+    scrollCanvasToMinimapPoint(svgElement, e.clientX, e.clientY);
+  };
+  const handleMinimapViewportPointerMove = (e: React.PointerEvent<SVGRectElement>) => {
+    if (!e.currentTarget.hasPointerCapture(e.pointerId)) return;
+    const svgElement = e.currentTarget.ownerSVGElement;
+    if (!svgElement) return;
+
+    scrollCanvasToMinimapPoint(svgElement, e.clientX, e.clientY);
+  };
   const updateNode = (nodeId: string, updates: Partial<AgentNode>) => {
     const nextNodes = nodesRef.current.map((n) => (n.id === nodeId ? { ...n, ...updates } : n));
     nodesRef.current = nextNodes;
@@ -2384,13 +2565,31 @@ export default function App() {
                 onRenameWorkflow={handleRenameWorkflow}
                 onImportWorkflowFile={handleImportWorkflowFile}
                 savedWorkflows={savedWorkflowsList}
+                statusCounts={workflowStatusCounts}
                 zoom={zoom}
-                onZoomIn={() => setZoom(z => Math.min(1.5, z + 0.1))}
-                onZoomOut={() => setZoom(z => Math.max(0.3, z - 0.1))}
+                onZoomIn={() => setZoom(z => Math.min(MAX_MANUAL_ZOOM, z + 0.1))}
+                onZoomOut={() => setZoom(z => Math.max(MIN_MANUAL_ZOOM, z - 0.1))}
                 onResetZoom={() => setZoom(1)}
                 onAutoLayout={handleAutoLayout}
                 onZoomToFit={handleZoomToFit}
               />
+
+              {workflowStatusItems.length > 0 && (
+                <div className="pointer-events-none absolute left-2 top-[50px] z-40">
+                  <div className="flex max-w-[calc(100vw-360px)] items-center gap-2 overflow-hidden rounded-lg border border-neutral-200 bg-white/95 px-2.5 py-1.5 text-[11px] font-semibold text-neutral-600 shadow-sm backdrop-blur dark:border-neutral-800 dark:bg-neutral-900/95 dark:text-neutral-300">
+                    {workflowStatusItems.map((item, index) => (
+                      <React.Fragment key={item.status}>
+                        {index > 0 && <span className="text-neutral-300 dark:text-neutral-700">·</span>}
+                        <span className="flex shrink-0 items-center gap-1.5">
+                          <span className={`h-2 w-2 rounded-full ${item.dot}`} />
+                          <span>{workflowStatusCounts[item.status]}</span>
+                          <span>{item.label}</span>
+                        </span>
+                      </React.Fragment>
+                    ))}
+                  </div>
+                </div>
+              )}
 
               {/* INTERACTIVE GRID CANVAS CONTAINER */}
               <div
@@ -2440,9 +2639,9 @@ export default function App() {
 
                     // Source output is on the right edge of the card, target input on the left
                     const x1 = source.x + 280;
-                    const y1 = source.y + 115;
+                    const y1 = source.y + NODE_CONNECTION_PORT_Y;
                     const x2 = target.x;
-                    const y2 = target.y + 115;
+                    const y2 = target.y + NODE_CONNECTION_PORT_Y;
 
                     // Bezier calculation
                     const ctrlX1 = x1 + 100;
@@ -2450,9 +2649,17 @@ export default function App() {
                     const ctrlX2 = x2 - 100;
                     const ctrlY2 = y2;
                     const isSourceRunning = source.status === "running";
+                    const isTargetRunning = target.status === "running";
                     const isTargetWaiting = target.status === "waiting";
-                    const dashPattern = isSourceRunning ? "8 6" : isTargetWaiting ? "2 7" : "none";
-                    const pathClassName = isSourceRunning ? "animate-dash cursor-pointer" : "cursor-pointer";
+                    const isActiveIncomingPath = isTargetRunning && source.status === "completed";
+                    const dashPattern = isActiveIncomingPath || isSourceRunning ? "8 6" : isTargetWaiting ? "2 7" : "none";
+                    const pathClassName = isActiveIncomingPath || isSourceRunning ? "animate-dash cursor-pointer" : "cursor-pointer";
+                    const pathStroke = selectedConnectionId === link.id
+                      ? "#ef4444"
+                      : isActiveIncomingPath
+                        ? "#0284c7"
+                        : "#0ea5e9";
+                    const pathStrokeWidth = isActiveIncomingPath ? "4.5" : "3.5";
 
                     return (
                       <g
@@ -2467,15 +2674,14 @@ export default function App() {
                         onContextMenu={(e) => {
                           e.preventDefault();
                           e.stopPropagation();
-                          const menuWidth = 172;
-                          const menuHeight = 44;
+                          const position = getClampedMenuPosition(e.clientX, e.clientY, 172, 44);
                           setSelectedConnectionId(link.id);
                           setSelectedNodeId(null);
                           setSelectedDescribeAgentInfo(null);
                           setConnectionContextMenu({
                             connectionId: link.id,
-                            x: Math.min(e.clientX, window.innerWidth - menuWidth - 8),
-                            y: Math.min(e.clientY, window.innerHeight - menuHeight - 8)
+                            x: position.x,
+                            y: position.y
                           });
                         }}
                       >
@@ -2489,13 +2695,24 @@ export default function App() {
                           style={{ opacity: selectedConnectionId === link.id ? 0.3 : 1 }}
                         />
 
+                        {isActiveIncomingPath && (
+                          <path
+                            d={`M ${x1} ${y1} C ${ctrlX1} ${ctrlY1}, ${ctrlX2} ${ctrlY2}, ${x2} ${y2}`}
+                            stroke="#38bdf8"
+                            strokeWidth="10"
+                            strokeLinecap="round"
+                            opacity="0.22"
+                            fill="none"
+                          />
+                        )}
+
                         {/* Glowing active path connection */}
                         <path
                           d={`M ${x1} ${y1} C ${ctrlX1} ${ctrlY1}, ${ctrlX2} ${ctrlY2}, ${x2} ${y2}`}
-                          stroke={selectedConnectionId === link.id ? "#ef4444" : "#0ea5e9"}
-                          strokeWidth="3.5"
+                          stroke={pathStroke}
+                          strokeWidth={pathStrokeWidth}
                           strokeDasharray={dashPattern}
-                          strokeLinecap={isTargetWaiting && !isSourceRunning ? "round" : "butt"}
+                          strokeLinecap={isActiveIncomingPath || (isTargetWaiting && !isSourceRunning) ? "round" : "butt"}
                           className={pathClassName}
                           fill="none"
                           markerEnd={selectedConnectionId === link.id ? "" : "url(#arrow)"}
@@ -2513,7 +2730,7 @@ export default function App() {
                       // Default port-to-port dashed connector
                       const isOutput = connectionDraft.type === "output";
                       const x1 = isOutput ? draftNode.x + 280 : draftNode.x;
-                      const y1 = draftNode.y + 115;
+                      const y1 = draftNode.y + NODE_CONNECTION_PORT_Y;
                       const x2 = pointerPos.x;
                       const y2 = pointerPos.y;
 
@@ -2560,6 +2777,7 @@ export default function App() {
                     });
                   });
                   const combinedInputs = [...node.inputDatasets.map(url => ({ name: getArtifactFilename({ url }, 'Manual Input Dataset'), url, type: 'manual' as const, sourceId: '', description: url })), ...parentDatasetUrls].filter(item => !node.excludedInputs?.includes(item.url));
+                  const runDisabledReason = getRunDisabledReason(node.id);
 
                   return (
                   <AgentNodeCard
@@ -2586,6 +2804,7 @@ export default function App() {
                     }}
                     onDelete={() => handleDeleteNode(node.id)}
                     onExecute={() => executeSingleNode(node.id)}
+                    runDisabledReason={runDisabledReason}
                     onCancel={() => cancelNodeExecution(node.id)}
                     onUpdateNode={(nodeId, updates) => {
                       updateNode(nodeId, updates);
@@ -2648,6 +2867,103 @@ export default function App() {
                 </div>
               )}
               </div>
+              {nodes.length > 0 && minimapBounds && (
+                <div className="absolute bottom-0 right-0 z-40 rounded-tl-lg border border-b-0 border-r-0 border-neutral-200 bg-white/95 p-1.5 shadow-lg backdrop-blur dark:border-neutral-800 dark:bg-neutral-900/95">
+                  <div className="mb-1 flex items-center justify-between gap-3 px-0.5">
+                    <span className="text-[10px] font-bold uppercase text-neutral-500">Overview</span>
+                    <div className="flex items-center gap-1.5">
+                      {!isMinimapCollapsed && (
+                        <span className="text-[10px] font-mono text-neutral-400">{Math.round(zoom * 100)}%</span>
+                      )}
+                      <button
+                        type="button"
+                        title={isMinimapCollapsed ? "Show mini-map" : "Hide mini-map"}
+                        onClick={() => setIsMinimapCollapsed((current) => !current)}
+                        className="flex h-5 w-5 items-center justify-center rounded border border-neutral-200 text-neutral-500 hover:bg-neutral-50 hover:text-neutral-800"
+                      >
+                        {isMinimapCollapsed ? <ChevronsUpDown className="h-3 w-3" /> : <ChevronsDownUp className="h-3 w-3" />}
+                      </button>
+                    </div>
+                  </div>
+                  {!isMinimapCollapsed && (
+                    <svg
+                      width={minimapWidth}
+                      height={minimapHeight}
+                      viewBox={`0 0 ${minimapWidth} ${minimapHeight}`}
+                      className="block rounded-md bg-neutral-50 dark:bg-neutral-950"
+                      aria-label="Workflow mini-map"
+                    >
+                      <rect x="0" y="0" width={minimapWidth} height={minimapHeight} rx="6" fill="currentColor" className="text-neutral-50 dark:text-neutral-950" />
+                      <clipPath id="minimap-clip">
+                        <rect x="0" y="0" width={minimapWidth} height={minimapHeight} rx="6" />
+                      </clipPath>
+                      <g clipPath="url(#minimap-clip)">
+                        {connections.map((connection) => {
+                          const source = nodes.find((node) => node.id === connection.sourceId);
+                          const target = nodes.find((node) => node.id === connection.targetId);
+                          if (!source || !target) return null;
+                          const x1 = toMinimapX(source.x + NODE_CARD_WIDTH);
+                          const y1 = toMinimapY(source.y + NODE_CONNECTION_PORT_Y);
+                          const x2 = toMinimapX(target.x);
+                          const y2 = toMinimapY(target.y + NODE_CONNECTION_PORT_Y);
+                          const curveOffset = Math.max(16, Math.min(42, Math.abs(x2 - x1) * 0.45));
+                          const path = `M ${x1} ${y1} C ${x1 + curveOffset} ${y1}, ${x2 - curveOffset} ${y2}, ${x2} ${y2}`;
+
+                          return (
+                            <path
+                              key={connection.id}
+                              d={path}
+                              stroke="#38bdf8"
+                              strokeWidth="1.4"
+                              strokeLinecap="round"
+                              fill="none"
+                              opacity="0.7"
+                            />
+                          );
+                        })}
+                        {nodes.map((node) => {
+                          const category = getAgentCategory(node.agentId);
+                          const colors =
+                            category === "Data Access"
+                              ? { fill: "#d1fae5", stroke: "#10b981" }
+                              : category === "Analysis"
+                                ? { fill: "#e0f2fe", stroke: "#0ea5e9" }
+                                : category === "Visualization"
+                                  ? { fill: "#f3e8ff", stroke: "#a855f7" }
+                                  : { fill: "#ccfbf1", stroke: "#14b8a6" };
+                          return (
+                            <rect
+                              key={node.id}
+                              x={toMinimapX(node.x)}
+                              y={toMinimapY(node.y)}
+                              width={Math.max(3, NODE_CARD_WIDTH * minimapScale)}
+                              height={Math.max(3, NODE_CARD_HEIGHT * minimapScale)}
+                              rx="4"
+                              fill={colors.fill}
+                              opacity="0.95"
+                              stroke={node.id === selectedNodeId ? "#0f172a" : colors.stroke}
+                              strokeWidth={node.id === selectedNodeId ? "1.5" : "0.8"}
+                            />
+                          );
+                        })}
+                        <rect
+                          x={minimapViewportX}
+                          y={minimapViewportY}
+                          width={minimapViewportWidth}
+                          height={minimapViewportHeight}
+                          rx="2"
+                          fill="rgba(14, 165, 233, 0.08)"
+                          stroke="#0284c7"
+                          strokeWidth="1.5"
+                          className="cursor-move"
+                          onPointerDown={handleMinimapViewportPointerDown}
+                          onPointerMove={handleMinimapViewportPointerMove}
+                        />
+                      </g>
+                    </svg>
+                  )}
+                </div>
+              )}
             </>
           ) : (
             <div className="relative h-full min-h-0 flex-1" />
@@ -2719,14 +3035,15 @@ export default function App() {
             >
               <button
                 type="button"
-                disabled={nodeContextMenuNode.status === "running"}
+                disabled={nodeContextMenuNode.status === "running" || Boolean(getRunDisabledReason(nodeContextMenu.nodeId))}
+                title={getRunDisabledReason(nodeContextMenu.nodeId) || (nodeContextMenuNode.status === "running" ? "Agent is currently streaming." : "Run this agent")}
                 onClick={() => {
                   closeContextMenus();
                   executeSingleNode(nodeContextMenu.nodeId);
                 }}
                 className="flex w-full items-center gap-2 px-3 py-2 text-left font-semibold text-neutral-700 hover:bg-neutral-50 disabled:cursor-not-allowed disabled:text-neutral-400 disabled:hover:bg-white"
               >
-                <Play className={`h-3.5 w-3.5 ${nodeContextMenuNode.status === "running" ? "text-neutral-400" : "text-emerald-600"}`} />
+                <Play className={`h-3.5 w-3.5 ${nodeContextMenuNode.status === "running" || getRunDisabledReason(nodeContextMenu.nodeId) ? "text-neutral-400" : "text-emerald-600"}`} />
                 <span>Run Agent</span>
               </button>
               <button
@@ -2906,7 +3223,7 @@ export default function App() {
               <button
                 type="button"
                 onClick={() => {
-                  setZoom((z) => Math.min(1.5, z + 0.1));
+                  setZoom((z) => Math.min(MAX_MANUAL_ZOOM, z + 0.1));
                   closeContextMenus();
                 }}
                 className="flex w-full items-center gap-2 px-3 py-2 text-left font-semibold text-neutral-700 hover:bg-neutral-50"
@@ -2917,7 +3234,7 @@ export default function App() {
               <button
                 type="button"
                 onClick={() => {
-                  setZoom((z) => Math.max(0.3, z - 0.1));
+                  setZoom((z) => Math.max(MIN_MANUAL_ZOOM, z - 0.1));
                   closeContextMenus();
                 }}
                 className="flex w-full items-center gap-2 px-3 py-2 text-left font-semibold text-neutral-700 hover:bg-neutral-50"

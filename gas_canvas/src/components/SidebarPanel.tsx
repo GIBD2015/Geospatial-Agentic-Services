@@ -16,6 +16,11 @@ import { getAgentAesthetics } from "./AgentNodeCard";
 
 type AgentCategory = "Data Access" | "Analysis" | "Visualization" | "Domain";
 
+const getClampedMenuPosition = (clientX: number, clientY: number, width: number, height: number, margin = 8) => ({
+  x: Math.min(Math.max(margin, clientX), window.innerWidth - width - margin),
+  y: Math.min(Math.max(margin, clientY), window.innerHeight - height - margin)
+});
+
 export interface GasServerData {
   url: string;
   providerName: string;
@@ -346,12 +351,13 @@ export const SidebarPanel: React.FC<SidebarPanelProps> = ({
                             onContextMenu={(e) => {
                               e.preventDefault();
                               e.stopPropagation();
+                              const position = getClampedMenuPosition(e.clientX, e.clientY, 176, 132);
                               setAgentContextMenu({
                                 serverUrl: server.url,
                                 agentId: tpl.agent_id,
                                 name: tpl.name,
-                                x: e.clientX,
-                                y: e.clientY
+                                x: position.x,
+                                y: position.y
                               });
                             }}
                             onDoubleClick={(e) => {
