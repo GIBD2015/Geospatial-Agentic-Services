@@ -29,10 +29,12 @@ For the broader conceptual framework, see the
 
 [View the GitHub source repository](https://github.com/GIBD2015/geospatial-agentic-services).
 
-This documentation site is organized around four entry points and a compact
-set of core references.
+This documentation site is organized by audience: user guides for using GAS
+tools and services, developer guides for building new services and modifying
+the codebase, deployment notes for hosting systems, and compact references for
+the GAS interface model.
 
-## Getting Started
+## User Guides
 
 ### Use GAS Services
 
@@ -41,22 +43,33 @@ notebooks, applications, GIS workflows, or AI orchestrators.
 
 - [Use GAS Services](gas_client_sdk.md)
 - [Use GAS Canvas](gas_canvas.md)
-- [GAS Interfaces](gas_interfaces.md)
 - [GAS Registry](gas_registry.md)
-- [Included Agents](included_agents.md)
 - [Notebook Examples](examples.md)
 
-### Add an Agent Service
+## Developer Guides
+
+### Add An Agent Service
 
 Start here if you want to publish a new geospatial capability into the GAS
 ecosystem.
 
 - [Add an Agent Service](adding_an_agent_service.md)
-- [Server Architecture](gas_server_architecture.md)
 - [GAS Interfaces](gas_interfaces.md)
+- [Server Architecture](gas_server_architecture.md)
+- [GAS Canvas Development](gas_canvas_development.md)
 - [Included Agents](included_agents.md)
 
-### Host a GAS Server
+### Improve The Codebase
+
+Start here if you want to contribute to the GAS server framework, registry,
+client SDKs, schemas, examples, tests, or documentation.
+
+- [Contributing](contributing.md)
+- [Server Architecture](gas_server_architecture.md)
+- [GAS Interfaces](gas_interfaces.md)
+- [GAS Registry](gas_registry.md)
+
+## Deployment And Operations
 
 Start here if you want to operate a public or private GAS server.
 
@@ -65,17 +78,7 @@ Start here if you want to operate a public or private GAS server.
 - [GAS Registry](gas_registry.md)
 - [Security](security.md)
 
-### Improve the Codebase
-
-Start here if you want to contribute to the GAS server framework, registry,
-client SDKs, schemas, examples, tests, or documentation.
-
-- [Contributing](contributing.md)
-- [Server Architecture](gas_server_architecture.md)
-- [Use GAS Services](gas_client_sdk.md)
-- [GAS Registry](gas_registry.md)
-
-## Core Documentation
+## Technical Reference
 
 - [GAS Interfaces](gas_interfaces.md) explains the discovery, description,
   task request, task response, and artifact metadata contracts.

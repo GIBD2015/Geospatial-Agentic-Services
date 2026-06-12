@@ -49,6 +49,12 @@ those records separate by using a server-qualified registry identifier.
 
 ## User Interface
 
+![GAS Registry card view](assets/gas-registry-store-overview.png)
+
+The registry interface presents published agents in searchable card and list
+views, with controls for registering servers, selecting visible agents, and
+reviewing service details.
+
 The registry web page supports:
 
 - card and list views

@@ -19,20 +19,20 @@ theme:
 
 nav:
   - Home: index.md
-  - Getting Started:
+  - User Guides:
       - Use GAS Services: gas_client_sdk.md
       - Use GAS Canvas: gas_canvas.md
-      - Add an Agent Service: adding_an_agent_service.md
-      - Host a GAS Server: development_and_deployment_environment.md
-      - Improve the Codebase: contributing.md
-  - Core Documentation:
-      - GAS Interfaces: gas_interfaces.md
-      - Server Architecture: gas_server_architecture.md
       - GAS Registry: gas_registry.md
-      - Included Agents: included_agents.md
-  - Examples:
       - Notebook Examples: examples.md
-  - Project:
+  - Developer Guides:
+      - GAS Interfaces: gas_interfaces.md
+      - Add an Agent Service: adding_an_agent_service.md
+      - Server Architecture: gas_server_architecture.md
+      - Included Agents: included_agents.md
+      - GAS Canvas Development: gas_canvas_development.md
+      - Improve the Codebase: contributing.md
+  - Deployment & Operations:
+      - Host a GAS Server: development_and_deployment_environment.md
       - Security: security.md
 
 markdown_extensions:
