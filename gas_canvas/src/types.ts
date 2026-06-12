@@ -68,6 +68,16 @@ export interface TaskResult {
   error?: string;
 }
 
+export type SourceCredentials = Record<string, Record<string, string>>;
+
+export interface SourceCredentialSpec {
+  sourceId: string;
+  name: string;
+  description?: string;
+  fields: string[];
+  registrationUrl?: string;
+}
+
 export interface StreamEvent {
   event: string;
   payload?: any;
@@ -91,6 +101,7 @@ export interface AgentNode {
   inputDatasets: string[]; // URLs or files
   credentials: {
     OPENAI_API_KEY?: string;
+    source_credentials?: SourceCredentials;
   };
   excludedInputs?: string[];
   serverUrl?: string;

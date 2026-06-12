@@ -1,16 +1,26 @@
 import express from "express";
+import { execFile } from "child_process";
 import fs from "fs";
 import os from "os";
 import path from "path";
 import { createRequire } from "module";
 import { createServer as createViteServer } from "vite";
 import { GasClient } from "@gibd/gas-client";
+import { promisify } from "util";
 
 const require = createRequire(path.join(process.cwd(), "server.ts"));
 const Database = require("better-sqlite3");
 const wkx = require("wkx");
+const execFileAsync = promisify(execFile);
 
 const GPKG_PREVIEW_FEATURE_LIMIT = 5000;
+const GEOTIFF_PREVIEW_TIMEOUT_MS = 120000;
+
+function getPythonExecutable() {
+  const projectVenvPython = path.resolve(process.cwd(), "..", ".venv", "Scripts", "python.exe");
+  if (fs.existsSync(projectVenvPython)) return projectVenvPython;
+  return process.env.PYTHON || "python";
+}
 
 function quoteSqlIdentifier(identifier: string) {
   return `"${identifier.replace(/"/g, '""')}"`;
@@ -403,6 +413,60 @@ async function startServer() {
       console.error("Failed to parse GPKG preview:", err);
       res.status(500).json({
         error: "Failed to parse GPKG",
+        details: err.message,
+        url
+      });
+    } finally {
+      if (tempFilePath) {
+        fs.rmSync(tempFilePath, { force: true });
+      }
+    }
+  });
+
+  app.get("/api/parse-geotiff", async (req, res) => {
+    const url = req.query.url as string;
+    if (!url) {
+      res.status(400).json({ error: "url is required" });
+      return;
+    }
+
+    let tempFilePath = "";
+
+    try {
+      const response = await fetch(url, {
+        signal: AbortSignal.timeout(60000)
+      });
+
+      if (!response.ok) {
+        throw new Error(`Failed to fetch GeoTIFF file: HTTP ${response.status}`);
+      }
+
+      const arrayBuffer = await response.arrayBuffer();
+      tempFilePath = path.join(
+        os.tmpdir(),
+        `gas-canvas-preview-${Date.now()}-${Math.random().toString(16).slice(2)}.tif`
+      );
+      fs.writeFileSync(tempFilePath, Buffer.from(arrayBuffer));
+
+      const scriptPath = path.join(process.cwd(), "scripts", "render_geotiff_preview.py");
+      const { stdout, stderr } = await execFileAsync(
+        getPythonExecutable(),
+        [scriptPath, tempFilePath],
+        {
+          timeout: GEOTIFF_PREVIEW_TIMEOUT_MS,
+          maxBuffer: 24 * 1024 * 1024
+        }
+      );
+
+      if (stderr.trim()) {
+        console.warn("GeoTIFF preview warnings:", stderr.trim());
+      }
+
+      res.json(JSON.parse(stdout));
+    } catch (err: any) {
+      console.error("Failed to parse GeoTIFF preview:", err);
+      res.status(500).json({
+        error: "Failed to parse GeoTIFF",
         details: err.message,
         url
       });

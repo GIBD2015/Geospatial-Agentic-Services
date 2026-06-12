@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from "react";
+import React, { useState, useEffect, useMemo, useRef } from "react";
 import {
   Network,
   Settings,
@@ -37,7 +37,7 @@ import {
   Play,
   Pencil
 } from "lucide-react";
-import { AgentNode, NodeConnection, SavedWorkflow, TaskResult, TaskArtifact } from "./types";
+import { AgentNode, NodeConnection, SavedWorkflow, SourceCredentials, SourceCredentialSpec, TaskResult, TaskArtifact } from "./types";
 import { SidebarPanel, AGENT_TEMPLATES } from "./components/SidebarPanel";
 import { InspectorPanel } from "./components/InspectorPanel";
 import { AgentDescribePanel } from "./components/AgentDescribePanel";
@@ -67,23 +67,31 @@ const getApiUrl = (path: string) => {
 
 const STORAGE_KEYS = {
   CREDENTIALS: "gas_canvas_credentials",
+  SOURCE_CREDENTIALS: "gas_source_credentials",
   WORKFLOWS: "gas_saved_workflows"
 };
 
 const getArtifactExtension = (url: string, title: string) => {
+  const normalizedTitle = title.toLowerCase();
+  if (normalizedTitle.includes("geotiff") || normalizedTitle.includes("geo tiff")) return "geotiff";
+
   const fromTitle = title.split(".").pop()?.toLowerCase();
   if (fromTitle && fromTitle !== title.toLowerCase()) return fromTitle;
 
   try {
     const pathname = new URL(url, window.location.href).pathname;
+    const normalizedPathname = pathname.toLowerCase();
+    if (normalizedPathname.includes("geotiff") || normalizedPathname.includes("geo_tiff")) return "geotiff";
     return pathname.split(".").pop()?.toLowerCase() || "";
   } catch {
+    const normalizedUrl = url.toLowerCase();
+    if (normalizedUrl.includes("geotiff") || normalizedUrl.includes("geo_tiff")) return "geotiff";
     return url.split("?")[0].split(".").pop()?.toLowerCase() || "";
   }
 };
 
 const isSpatialArtifact = (url: string, title: string) =>
-  ["geojson", "gpkg"].includes(getArtifactExtension(url, title));
+  ["geojson", "gpkg", "tif", "tiff", "geotiff", "geotif"].includes(getArtifactExtension(url, title));
 
 const isHtmlArtifact = (url: string, title: string) =>
   ["html", "htm"].includes(getArtifactExtension(url, title));
@@ -186,6 +194,54 @@ const formatStreamLogLine = (event: any, fallbackAgentName?: string) => {
 
 const formatLocalLogLine = (label: string, message: string) =>
   `[${new Date().toLocaleTimeString([], { hour12: false })}] ${label}: ${message}`;
+
+const getAgentDetailsCacheKey = (serverUrl: string, agentId: string) => `${serverUrl || ""}::${agentId}`;
+
+const extractSourceCredentialSpecs = (agentInfo: any): SourceCredentialSpec[] => {
+  const dataSources = agentInfo?.extensions?.data_sources;
+  if (!Array.isArray(dataSources)) return [];
+
+  return dataSources
+    .filter((source: any) => source?.credential_required && Array.isArray(source.required_credential_fields))
+    .map((source: any) => ({
+      sourceId: String(source.source_id || source.id || source.name || ""),
+      name: String(source.name || source.source_id || "Data source"),
+      description: source.description ? String(source.description) : undefined,
+      fields: source.required_credential_fields.map((field: any) => String(field)).filter(Boolean),
+      registrationUrl: source.registration_url ? String(source.registration_url) : undefined,
+    }))
+    .filter((spec) => spec.sourceId && spec.fields.length > 0);
+};
+
+const mergeSourceCredentialSpecs = (specGroups: SourceCredentialSpec[][]) => {
+  const merged = new Map<string, SourceCredentialSpec>();
+  specGroups.flat().forEach((spec) => {
+    const existing = merged.get(spec.sourceId);
+    if (!existing) {
+      merged.set(spec.sourceId, spec);
+      return;
+    }
+    merged.set(spec.sourceId, {
+      ...existing,
+      ...spec,
+      fields: Array.from(new Set([...existing.fields, ...spec.fields])),
+    });
+  });
+  return Array.from(merged.values()).sort((a, b) => a.name.localeCompare(b.name));
+};
+
+const pruneSourceCredentials = (sourceCredentials: SourceCredentials) => {
+  const pruned: SourceCredentials = {};
+  Object.entries(sourceCredentials || {}).forEach(([sourceId, fields]) => {
+    const nextFields: Record<string, string> = {};
+    Object.entries(fields || {}).forEach(([field, value]) => {
+      const trimmed = String(value || "").trim();
+      if (trimmed) nextFields[field] = trimmed;
+    });
+    if (Object.keys(nextFields).length > 0) pruned[sourceId] = nextFields;
+  });
+  return pruned;
+};
 
 const extractTaskIdFromEvent = (event: any) => {
   const payload = event?.payload && typeof event.payload === "object" ? event.payload : {};
@@ -573,6 +629,8 @@ export default function App() {
   const [credentials, setCredentials] = useState({
     OPENAI_API_KEY: ""
   });
+  const [sourceCredentials, setSourceCredentials] = useState<SourceCredentials>({});
+  const [agentDetailsCache, setAgentDetailsCache] = useState<Record<string, any>>({});
 
   // Workspace artifact preview states
   const [activeWorkspaceTab, setActiveWorkspaceTab] = useState<"canvas" | "map" | "html" | "artifacts">("canvas");
@@ -625,11 +683,11 @@ export default function App() {
     const normalizedArtifacts = normalizeTaskArtifacts(artifacts);
 
     const spatialArtifacts = normalizedArtifacts
-      .filter((artifact) => isSpatialArtifact(artifact.url, getArtifactFilename(artifact)))
+      .filter((artifact) => isSpatialArtifact(artifact.url, getArtifactPreviewTitle(artifact)))
       .map((artifact) => ({ url: artifact.url, title: getArtifactPreviewTitle(artifact) }));
-    const htmlArtifacts = normalizedArtifacts.filter((artifact) => isHtmlArtifact(artifact.url, getArtifactFilename(artifact)));
+    const htmlArtifacts = normalizedArtifacts.filter((artifact) => isHtmlArtifact(artifact.url, getArtifactPreviewTitle(artifact)));
     const otherArtifacts = normalizedArtifacts.filter(
-      (artifact) => !isSpatialArtifact(artifact.url, getArtifactFilename(artifact)) && !isHtmlArtifact(artifact.url, getArtifactFilename(artifact))
+      (artifact) => !isSpatialArtifact(artifact.url, getArtifactPreviewTitle(artifact)) && !isHtmlArtifact(artifact.url, getArtifactPreviewTitle(artifact))
     );
 
     if (spatialArtifacts.length > 0) {
@@ -697,6 +755,15 @@ export default function App() {
         setCredentials(JSON.parse(savedCreds));
       } catch (e) {
         console.error("Failed to parse saved credentials", e);
+      }
+    }
+
+    const savedSourceCreds = localStorage.getItem(STORAGE_KEYS.SOURCE_CREDENTIALS);
+    if (savedSourceCreds) {
+      try {
+        setSourceCredentials(JSON.parse(savedSourceCreds));
+      } catch (e) {
+        console.error("Failed to parse saved source credentials", e);
       }
     }
 
@@ -1219,25 +1286,36 @@ export default function App() {
     setServers(prev => prev.map(s => s.url === url ? { ...s, isExpanded: !s.isExpanded } : s));
   };
 
+  const fetchAgentDetails = async (serverUrl: string, agentId: string) => {
+    const cacheKey = getAgentDetailsCacheKey(serverUrl, agentId);
+    if (agentDetailsCache[cacheKey]) return agentDetailsCache[cacheKey];
+
+    const res = await fetch(getApiUrl(`/api/gas/agent-details?serverUrl=${encodeURIComponent(serverUrl)}&agentId=${encodeURIComponent(agentId)}`));
+    const data = await res.json();
+    if (data.error) {
+      throw new Error(data.details || data.error);
+    }
+
+    const server = servers.find((item) => item.url === serverUrl);
+    const enriched = {
+      ...data,
+      _server: {
+        url: serverUrl,
+        providerName: server?.providerName,
+        provider: server?.provider,
+        describeUrl: `${serverUrl.replace(/\/+$/, "")}/?SERVICE=GAS&VERSION=1.0.0&REQUEST=DescribeAgent&agent_id=${encodeURIComponent(agentId)}`,
+        getCapabilitiesUrl: `${serverUrl.replace(/\/+$/, "")}/?SERVICE=GAS&VERSION=1.0.0&REQUEST=GetCapabilities`,
+      }
+    };
+
+    setAgentDetailsCache((prev) => ({ ...prev, [cacheKey]: enriched }));
+    return enriched;
+  };
+
   const handleDescribeAgent = async (serverUrl: string, agentId: string) => {
     try {
-      const res = await fetch(getApiUrl(`/api/gas/agent-details?serverUrl=${encodeURIComponent(serverUrl)}&agentId=${encodeURIComponent(agentId)}`));
-      const data = await res.json();
-      if (data.error) {
-        showToast(`Error: ${data.details || data.error}`);
-      } else {
-        const server = servers.find((item) => item.url === serverUrl);
-        setSelectedDescribeAgentInfo({
-          ...data,
-          _server: {
-            url: serverUrl,
-            providerName: server?.providerName,
-            provider: server?.provider,
-            describeUrl: `${serverUrl.replace(/\/+$/, "")}/?SERVICE=GAS&VERSION=1.0.0&REQUEST=DescribeAgent&agent_id=${encodeURIComponent(agentId)}`,
-            getCapabilitiesUrl: `${serverUrl.replace(/\/+$/, "")}/?SERVICE=GAS&VERSION=1.0.0&REQUEST=GetCapabilities`,
-          }
-        });
-      }
+      const data = await fetchAgentDetails(serverUrl, agentId);
+      setSelectedDescribeAgentInfo(data);
     } catch (err: any) {
       showToast(`Error fetching agent details: ${err.message}`);
     }
@@ -1380,16 +1458,9 @@ export default function App() {
     const finalCredentials: any = {
       OPENAI_API_KEY: node.credentials.OPENAI_API_KEY || credentials.OPENAI_API_KEY,
     };
-    const savedSourceCreds = localStorage.getItem("gas_source_credentials");
-    if (savedSourceCreds) {
-      try {
-        const parsed = JSON.parse(savedSourceCreds);
-        if (Object.keys(parsed).length > 0) {
-          finalCredentials.source_credentials = parsed;
-        }
-      } catch (e) {
-        console.error("Failed to parse gas_source_credentials", e);
-      }
+    const activeSourceCredentials = pruneSourceCredentials(sourceCredentials);
+    if (Object.keys(activeSourceCredentials).length > 0) {
+      finalCredentials.source_credentials = activeSourceCredentials;
     }
 
     try {
@@ -2345,14 +2416,38 @@ export default function App() {
   };
 
   // Credentials changes
-  const handleSaveCredentials = (keys: { OPENAI_API_KEY: string }) => {
+  const handleSaveCredentials = (keys: { OPENAI_API_KEY: string }, nextSourceCredentials: SourceCredentials) => {
+    const prunedSourceCredentials = pruneSourceCredentials(nextSourceCredentials);
     setCredentials(keys);
+    setSourceCredentials(prunedSourceCredentials);
     localStorage.setItem(STORAGE_KEYS.CREDENTIALS, JSON.stringify(keys));
-    showToast("Saved API keys local overrides successfully! They'll authorize upcoming stream jobs.");
+    localStorage.setItem(STORAGE_KEYS.SOURCE_CREDENTIALS, JSON.stringify(prunedSourceCredentials));
+    showToast("Saved credential overrides for upcoming stream jobs.");
   };
 
   // Render variables helper
   const selectedNode = nodes.find((n) => n.id === selectedNodeId) || null;
+  const selectedNodeDetails =
+    selectedNode ? agentDetailsCache[getAgentDetailsCacheKey(selectedNode.serverUrl || "", selectedNode.agentId)] : null;
+  const sourceCredentialSpecs = useMemo(
+    () => mergeSourceCredentialSpecs(Object.values(agentDetailsCache).map((agentInfo) => extractSourceCredentialSpecs(agentInfo))),
+    [agentDetailsCache]
+  );
+  const selectedNodeSourceCredentialSpecs = useMemo(
+    () => extractSourceCredentialSpecs(selectedNodeDetails),
+    [selectedNodeDetails]
+  );
+
+  useEffect(() => {
+    if (!selectedNode?.serverUrl || !selectedNode.agentId) return;
+    const cacheKey = getAgentDetailsCacheKey(selectedNode.serverUrl, selectedNode.agentId);
+    if (agentDetailsCache[cacheKey]) return;
+
+    fetchAgentDetails(selectedNode.serverUrl, selectedNode.agentId).catch((err) => {
+      console.error("Failed to fetch selected agent details", err);
+    });
+  }, [selectedNode?.serverUrl, selectedNode?.agentId, agentDetailsCache]);
+
   const nodeContextMenuNode = nodeContextMenu ? nodes.find((node) => node.id === nodeContextMenu.nodeId) || null : null;
   const workflowStatusCounts = nodes.reduce<Partial<Record<AgentNode["status"], number>>>((counts, node) => {
     counts[node.status] = (counts[node.status] || 0) + 1;
@@ -2649,17 +2744,18 @@ export default function App() {
                     const ctrlX2 = x2 - 100;
                     const ctrlY2 = y2;
                     const isSourceRunning = source.status === "running";
-                    const isTargetRunning = target.status === "running";
                     const isTargetWaiting = target.status === "waiting";
-                    const isActiveIncomingPath = isTargetRunning && source.status === "completed";
-                    const dashPattern = isActiveIncomingPath || isSourceRunning ? "8 6" : isTargetWaiting ? "2 7" : "none";
-                    const pathClassName = isActiveIncomingPath || isSourceRunning ? "animate-dash cursor-pointer" : "cursor-pointer";
+                    const isCompletedInput = source.status === "completed";
+                    const isFlowingPath = isSourceRunning;
+                    const isWaitingForUpstream = isTargetWaiting && source.status !== "completed" && !isSourceRunning;
+                    const dashPattern = isFlowingPath ? "8 6" : isWaitingForUpstream ? "2 7" : "none";
+                    const pathClassName = isFlowingPath ? "gas-flow-path cursor-pointer" : "cursor-pointer";
                     const pathStroke = selectedConnectionId === link.id
                       ? "#ef4444"
-                      : isActiveIncomingPath
+                      : isCompletedInput
                         ? "#0284c7"
                         : "#0ea5e9";
-                    const pathStrokeWidth = isActiveIncomingPath ? "4.5" : "3.5";
+                    const pathStrokeWidth = isCompletedInput ? "4.5" : "3.5";
 
                     return (
                       <g
@@ -2695,7 +2791,7 @@ export default function App() {
                           style={{ opacity: selectedConnectionId === link.id ? 0.3 : 1 }}
                         />
 
-                        {isActiveIncomingPath && (
+                        {isSourceRunning && (
                           <path
                             d={`M ${x1} ${y1} C ${ctrlX1} ${ctrlY1}, ${ctrlX2} ${ctrlY2}, ${x2} ${y2}`}
                             stroke="#38bdf8"
@@ -2712,7 +2808,7 @@ export default function App() {
                           stroke={pathStroke}
                           strokeWidth={pathStrokeWidth}
                           strokeDasharray={dashPattern}
-                          strokeLinecap={isActiveIncomingPath || (isTargetWaiting && !isSourceRunning) ? "round" : "butt"}
+                          strokeLinecap={isFlowingPath || isWaitingForUpstream ? "round" : "butt"}
                           className={pathClassName}
                           fill="none"
                           markerEnd={selectedConnectionId === link.id ? "" : "url(#arrow)"}
@@ -3374,6 +3470,9 @@ export default function App() {
                 onClose={() => setSelectedNodeId(null)}
                 onOpenPreview={handleOpenArtifactPreview}
                 onViewAllArtifacts={handleViewAllArtifacts}
+                onOpenCredentialsVault={() => setIsCredentialsOpen(true)}
+                sourceCredentialSpecs={selectedNodeSourceCredentialSpecs}
+                sourceCredentials={sourceCredentials}
                 width={inspectorWidth}
               />
             )}
@@ -3398,6 +3497,8 @@ export default function App() {
         isOpen={isCredentialsOpen}
         onClose={() => setIsCredentialsOpen(false)}
         initialKeys={credentials}
+        sourceCredentialSpecs={sourceCredentialSpecs}
+        initialSourceCredentials={sourceCredentials}
         onSave={handleSaveCredentials}
       />
 

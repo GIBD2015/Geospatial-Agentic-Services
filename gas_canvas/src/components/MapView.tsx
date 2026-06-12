@@ -70,12 +70,14 @@ type MapDataset = {
   id: string;
   title: string;
   url: string;
+  kind: "vector" | "raster";
   visible: boolean;
   styleOpen: boolean;
   style: LayerStyle;
   geometry: GeometrySummary;
   paneName: string;
   attributes: AttributeTable;
+  raster?: RasterSummary;
 };
 
 type LayerStyle = {
@@ -91,6 +93,19 @@ type GeometrySummary = {
   hasPoint: boolean;
   hasLine: boolean;
   hasPolygon: boolean;
+  hasRaster: boolean;
+};
+
+type RasterSummary = {
+  width?: number;
+  height?: number;
+  bandCount?: number;
+  crs?: string | null;
+  opacity?: number;
+  stats?: {
+    min?: number | null;
+    max?: number | null;
+  };
 };
 
 type AttributeTable = {
@@ -116,7 +131,8 @@ const DEFAULT_LAYER_STYLE: LayerStyle = {
 const EMPTY_GEOMETRY_SUMMARY: GeometrySummary = {
   hasPoint: false,
   hasLine: false,
-  hasPolygon: false
+  hasPolygon: false,
+  hasRaster: false
 };
 
 const addGeometryType = (summary: GeometrySummary, geometryType = "") => {
@@ -213,6 +229,14 @@ const applyLayerStyle = (layer: any, style: LayerStyle) => {
 
 const GeometryIcons: React.FC<{ geometry: GeometrySummary }> = ({ geometry }) => (
   <span className="flex shrink-0 items-center gap-1" aria-label="Layer geometry type">
+    {geometry.hasRaster && (
+      <span title="Raster layer" className="grid h-3.5 w-3.5 grid-cols-2 gap-px overflow-hidden rounded-[2px] border border-neutral-500">
+        <span className="bg-emerald-300" />
+        <span className="bg-sky-300" />
+        <span className="bg-amber-300" />
+        <span className="bg-neutral-300" />
+      </span>
+    )}
     {geometry.hasPoint && (
       <span title="Point layer" className="h-2.5 w-2.5 rounded-full border border-neutral-500 bg-transparent" />
     )}
@@ -277,16 +301,26 @@ const getApiUrl = (path: string) => {
 };
 
 const getArtifactExtension = (url: string, title: string) => {
+  const normalizedTitle = title.toLowerCase();
+  if (normalizedTitle.includes("geotiff") || normalizedTitle.includes("geo tiff")) return "geotiff";
+
   const fromTitle = title.split(".").pop()?.toLowerCase();
   if (fromTitle && fromTitle !== title.toLowerCase()) return fromTitle;
 
   try {
     const pathname = new URL(url, window.location.href).pathname;
+    const normalizedPathname = pathname.toLowerCase();
+    if (normalizedPathname.includes("geotiff") || normalizedPathname.includes("geo_tiff")) return "geotiff";
     return pathname.split(".").pop()?.toLowerCase() || "";
   } catch {
+    const normalizedUrl = url.toLowerCase();
+    if (normalizedUrl.includes("geotiff") || normalizedUrl.includes("geo_tiff")) return "geotiff";
     return url.split("?")[0].split(".").pop()?.toLowerCase() || "";
   }
 };
+
+const isGeoTiffExtension = (extension: string) =>
+  ["tif", "tiff", "geotiff", "geotif"].includes(extension.toLowerCase());
 
 const loadLeaflet = () => {
   if (window.L) return Promise.resolve(window.L);
@@ -511,6 +545,8 @@ export const MapView: React.FC<MapViewProps> = ({ artifact = null, artifacts = [
         const fetchUrl =
           ext === "gpkg"
             ? getApiUrl(`/api/parse-gpkg?url=${encodeURIComponent(currentArtifact.url)}`)
+            : isGeoTiffExtension(ext)
+              ? getApiUrl(`/api/parse-geotiff?url=${encodeURIComponent(currentArtifact.url)}`)
             : currentArtifact.url;
 
         setLoading(true);
@@ -528,49 +564,109 @@ export const MapView: React.FC<MapViewProps> = ({ artifact = null, artifacts = [
             }
           }
 
-        const geojson = await response.json();
-        if (cancelled) return;
+          if (isGeoTiffExtension(ext)) {
+            const rasterPreview = await response.json();
+            if (cancelled) return;
 
-        const layerStyle = { ...DEFAULT_LAYER_STYLE };
-        const geometry = collectGeometryTypes(geojson);
-        const attributes = collectAttributeTable(geojson);
-        const paneName = getLayerPaneName(datasetId);
-        const pane = map.getPane(paneName) || map.createPane(paneName);
-        pane.style.zIndex = String(700 + datasets.length + 1);
-        const layer = L.geoJSON(geojson, {
-          pane: paneName,
-          pointToLayer: (_feature: any, latlng: any) =>
-            L.circleMarker(latlng, { ...getPointStyle(layerStyle), pane: paneName }),
-          style: (feature: any) => {
-            const geometryType = feature?.geometry?.type || "";
-            return getPathStyle(layerStyle, geometryType);
+            const bounds = rasterPreview?.bounds || {};
+            const hasBounds = [bounds.south, bounds.west, bounds.north, bounds.east].every(
+              (value) => typeof value === "number" && Number.isFinite(value)
+            );
+            if (!hasBounds || !rasterPreview?.image_data_url) {
+              throw new Error("GeoTIFF preview did not include valid bounds or image data.");
+            }
+
+            const paneName = getLayerPaneName(datasetId);
+            const pane = map.getPane(paneName) || map.createPane(paneName);
+            pane.style.zIndex = String(700 + datasets.length + 1);
+            const leafletBounds = L.latLngBounds(
+              [bounds.south, bounds.west],
+              [bounds.north, bounds.east]
+            );
+            const layer = L.imageOverlay(rasterPreview.image_data_url, leafletBounds, {
+              pane: paneName,
+              opacity: 0.86
+            }).addTo(map);
+
+            layerRefs.current[datasetId] = layer;
+            setDatasets((prev) => {
+              const next = [
+                {
+                  id: datasetId,
+                  title: currentArtifact.title,
+                  url: currentArtifact.url,
+                  kind: "raster" as const,
+                  visible: true,
+                  styleOpen: false,
+                  style: { ...DEFAULT_LAYER_STYLE },
+                  geometry: { ...EMPTY_GEOMETRY_SUMMARY, hasRaster: true },
+                  paneName,
+                  attributes: { columns: [], rows: [] },
+                  raster: {
+                    width: rasterPreview.width,
+                    height: rasterPreview.height,
+                    bandCount: rasterPreview.band_count,
+                    crs: rasterPreview.crs,
+                    opacity: 0.86,
+                    stats: rasterPreview.stats
+                  }
+                },
+                ...prev.filter((dataset) => dataset.id !== datasetId)
+              ];
+              syncLayerOrder(next);
+              return next;
+            });
+
+            if (datasetId === zoomTargetId && leafletBounds?.isValid?.()) {
+              map.fitBounds(leafletBounds, { padding: [56, 56], maxZoom: 14 });
+            }
+          } else {
+            const geojson = await response.json();
+            if (cancelled) return;
+
+            const layerStyle = { ...DEFAULT_LAYER_STYLE };
+            const geometry = collectGeometryTypes(geojson);
+            const attributes = collectAttributeTable(geojson);
+            const paneName = getLayerPaneName(datasetId);
+            const pane = map.getPane(paneName) || map.createPane(paneName);
+            pane.style.zIndex = String(700 + datasets.length + 1);
+            const layer = L.geoJSON(geojson, {
+              pane: paneName,
+              pointToLayer: (_feature: any, latlng: any) =>
+                L.circleMarker(latlng, { ...getPointStyle(layerStyle), pane: paneName }),
+              style: (feature: any) => {
+                const geometryType = feature?.geometry?.type || "";
+                return getPathStyle(layerStyle, geometryType);
+              }
+            }).addTo(map);
+
+            layerRefs.current[datasetId] = layer;
+            setDatasets((prev) => {
+              const next = [
+                {
+                  id: datasetId,
+                  title: currentArtifact.title,
+                  url: currentArtifact.url,
+                  kind: "vector" as const,
+                  visible: true,
+                  styleOpen: false,
+                  style: layerStyle,
+                  geometry,
+                  paneName,
+                  attributes
+                },
+                ...prev.filter((dataset) => dataset.id !== datasetId)
+              ];
+              syncLayerOrder(next);
+              return next;
+            });
+            const bounds = layer.getBounds?.();
+            if (datasetId === zoomTargetId && bounds?.isValid?.()) {
+              map.fitBounds(bounds, { padding: [56, 56], maxZoom: 14 });
+            }
           }
-        }).addTo(map);
 
-        layerRefs.current[datasetId] = layer;
-        setDatasets((prev) => {
-          const next = [
-            {
-              id: datasetId,
-              title: currentArtifact.title,
-              url: currentArtifact.url,
-              visible: true,
-              styleOpen: false,
-              style: layerStyle,
-              geometry,
-              paneName,
-              attributes
-            },
-            ...prev.filter((dataset) => dataset.id !== datasetId)
-          ];
-          syncLayerOrder(next);
-          return next;
-        });
-        const bounds = layer.getBounds?.();
-        if (datasetId === zoomTargetId && bounds?.isValid?.()) {
-          map.fitBounds(bounds, { padding: [56, 56], maxZoom: 14 });
-        }
-        requestAnimationFrame(() => map.invalidateSize());
+          requestAnimationFrame(() => map.invalidateSize());
           setLoading(false);
         } catch (err: any) {
           if (!cancelled) {
@@ -641,6 +737,24 @@ export const MapView: React.FC<MapViewProps> = ({ artifact = null, artifacts = [
     );
   };
 
+  const updateRasterOpacity = (datasetId: string, opacity: number) => {
+    const normalizedOpacity = Math.max(0, Math.min(1, opacity));
+    layerRefs.current[datasetId]?.setOpacity?.(normalizedOpacity);
+    setDatasets((prev) =>
+      prev.map((dataset) =>
+        dataset.id === datasetId
+          ? {
+              ...dataset,
+              raster: {
+                ...(dataset.raster || {}),
+                opacity: normalizedOpacity
+              }
+            }
+          : dataset
+      )
+    );
+  };
+
   const removeDatasetFromMap = (datasetId: string) => {
     const map = mapRef.current;
     const layer = layerRefs.current[datasetId];
@@ -696,7 +810,7 @@ export const MapView: React.FC<MapViewProps> = ({ artifact = null, artifacts = [
   const openLayerContextMenu = (datasetId: string, event: React.MouseEvent) => {
     event.preventDefault();
     event.stopPropagation();
-    const menuWidth = 176;
+    const menuWidth = 224;
     const menuHeight = 124;
     const bounds = mapContainerRef.current?.getBoundingClientRect();
     const minX = bounds?.left ?? 0;
@@ -796,7 +910,7 @@ export const MapView: React.FC<MapViewProps> = ({ artifact = null, artifacts = [
         </div>
         {datasets.length === 0 ? (
           <div className="px-3 py-3 text-xs leading-relaxed text-neutral-500">
-            Preview GeoJSON or GeoPackage artifacts to add map layers.
+            Preview GeoJSON, GeoPackage, or GeoTIFF artifacts to add map layers.
           </div>
         ) : (
           <div className="max-h-80 overflow-y-auto p-2">
@@ -840,22 +954,28 @@ export const MapView: React.FC<MapViewProps> = ({ artifact = null, artifacts = [
                     <GeometryIcons geometry={dataset.geometry} />
                     <span className="min-w-0 flex-1">
                       <span className="block truncate text-xs font-bold text-neutral-800">{dataset.title}</span>
-                      <span className="block truncate font-mono text-[10px] text-neutral-400">{dataset.url}</span>
+                      <span className="block truncate font-mono text-[10px] text-neutral-400">
+                        {dataset.kind === "raster" && dataset.raster?.width && dataset.raster?.height
+                          ? `${dataset.raster.width} x ${dataset.raster.height}${dataset.raster.bandCount ? `, ${dataset.raster.bandCount} band${dataset.raster.bandCount === 1 ? "" : "s"}` : ""}`
+                          : dataset.url}
+                      </span>
                     </span>
                   </button>
-                  <button
-                    type="button"
-                    title="Style layer"
-                    onClick={() => toggleDatasetStylePanel(dataset.id)}
-                    className={`flex h-7 w-7 shrink-0 items-center justify-center rounded border border-neutral-200 bg-white hover:text-sky-700 ${
-                      dataset.styleOpen ? "text-sky-700" : "text-neutral-600"
-                    }`}
-                  >
-                    <SlidersHorizontal className="h-3.5 w-3.5" />
-                  </button>
+                  {dataset.kind === "vector" && (
+                    <button
+                      type="button"
+                      title="Style layer"
+                      onClick={() => toggleDatasetStylePanel(dataset.id)}
+                      className={`flex h-7 w-7 shrink-0 items-center justify-center rounded border border-neutral-200 bg-white hover:text-sky-700 ${
+                        dataset.styleOpen ? "text-sky-700" : "text-neutral-600"
+                      }`}
+                    >
+                      <SlidersHorizontal className="h-3.5 w-3.5" />
+                    </button>
+                  )}
                 </div>
 
-                {dataset.styleOpen && (
+                {dataset.kind === "vector" && dataset.styleOpen && (
                   <div className="mt-2 grid grid-cols-2 gap-2 border-t border-neutral-100 pt-2">
                     {(dataset.geometry.hasLine || dataset.geometry.hasPolygon || dataset.geometry.hasPoint) && (
                       <label className="text-[10px] font-bold uppercase text-neutral-500">
@@ -957,23 +1077,44 @@ export const MapView: React.FC<MapViewProps> = ({ artifact = null, artifacts = [
       {layerContextMenu && (
         <div
           onPointerDown={(event) => event.stopPropagation()}
-          className="fixed z-[900] w-44 overflow-hidden rounded-lg border border-neutral-200 bg-white text-xs shadow-xl"
+          className="fixed z-[900] w-56 overflow-hidden rounded-lg border border-neutral-200 bg-white text-xs shadow-xl"
           style={{ left: layerContextMenu.x, top: layerContextMenu.y }}
         >
-          <button
-            type="button"
-            onClick={() => openAttributePanel(layerContextMenu.datasetId)}
-            className="flex w-full items-center gap-2 px-3 py-2 text-left font-semibold text-neutral-700 hover:bg-neutral-50"
-          >
-            <Table className="h-3.5 w-3.5 text-sky-600" />
-            <span>View Attributes</span>
-          </button>
           {(() => {
             const dataset = datasets.find((item) => item.id === layerContextMenu.datasetId);
             if (!dataset) return null;
 
             return (
               <>
+              {dataset.kind === "vector" && (
+                <button
+                  type="button"
+                  onClick={() => openAttributePanel(layerContextMenu.datasetId)}
+                  className="flex w-full items-center gap-2 px-3 py-2 text-left font-semibold text-neutral-700 hover:bg-neutral-50"
+                >
+                  <Table className="h-3.5 w-3.5 text-sky-600" />
+                  <span>View Attributes</span>
+                </button>
+              )}
+              {dataset.kind === "raster" && (
+                <div
+                  className="border-b border-neutral-100 px-3 py-2"
+                  onPointerDown={(event) => event.stopPropagation()}
+                >
+                  <label className="block text-[10px] font-bold uppercase text-neutral-500">
+                    Opacity {Math.round((dataset.raster?.opacity ?? 0.86) * 100)}%
+                    <input
+                      type="range"
+                      min="0"
+                      max="1"
+                      step="0.05"
+                      value={dataset.raster?.opacity ?? 0.86}
+                      onChange={(event) => updateRasterOpacity(dataset.id, Number(event.currentTarget.value))}
+                      className="mt-1 h-6 w-full accent-sky-600"
+                    />
+                  </label>
+                </div>
+              )}
               <a
                 href={dataset.url}
                 download

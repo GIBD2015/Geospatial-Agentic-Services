@@ -16,7 +16,7 @@ import {
   HelpCircle,
   Info
 } from "lucide-react";
-import { AgentNode, NodeConnection, TaskArtifact, TaskResult } from "../types";
+import { AgentNode, NodeConnection, SourceCredentials, SourceCredentialSpec, TaskArtifact, TaskResult } from "../types";
 import { getAgentAesthetics } from "./AgentNodeCard";
 import { AGENT_TEMPLATES } from "./SidebarPanel";
 import { getArtifactFilename, getArtifactHoverText, getArtifactPreviewTitle, getArtifactSemanticName } from "../lib/artifacts";
@@ -29,7 +29,7 @@ const getArtifactExtension = (name = "", format = "") => {
 
 const isSpatialArtifact = (name = "", format = "") => {
   const extension = getArtifactExtension(name, format);
-  return extension === "geojson" || extension === "gpkg";
+  return ["geojson", "gpkg", "tif", "tiff", "geotiff", "geotif"].includes(extension);
 };
 
 const isHtmlArtifact = (name = "", format = "") => {
@@ -50,6 +50,9 @@ interface InspectorPanelProps {
   onClose: () => void;
   onOpenPreview: (url: string, title: string, artifact?: TaskArtifact) => void;
   onViewAllArtifacts: (artifacts: TaskArtifact[]) => void;
+  onOpenCredentialsVault: () => void;
+  sourceCredentialSpecs: SourceCredentialSpec[];
+  sourceCredentials: SourceCredentials;
   width: number;
 }
 
@@ -63,6 +66,9 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({
   onClose,
   onOpenPreview,
   onViewAllArtifacts,
+  onOpenCredentialsVault,
+  sourceCredentialSpecs,
+  sourceCredentials,
   width,
 }) => {
   const logTerminalRef = useRef<HTMLDivElement>(null);
@@ -125,6 +131,17 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({
     servers.find((server) => server.url === selectedNode.serverUrl)?.providerName ||
     selectedNode.serverUrl ||
     "Unknown GAS Server";
+  const totalSourceCredentialFields = sourceCredentialSpecs.reduce((count, spec) => count + spec.fields.length, 0);
+  const configuredSourceCredentialFields = sourceCredentialSpecs.reduce(
+    (count, spec) =>
+      count + spec.fields.filter((field) => Boolean(sourceCredentials[spec.sourceId]?.[field]?.trim())).length,
+    0
+  );
+  const missingSourceCredentialLabels = sourceCredentialSpecs.flatMap((spec) =>
+    spec.fields
+      .filter((field) => !sourceCredentials[spec.sourceId]?.[field]?.trim())
+      .map((field) => `${spec.name} ${field}`)
+  );
 
   return (
     <div style={{ width: `${width}px` }} className="border-l border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 flex flex-col h-full shrink-0 shadow-xl overflow-hidden">
@@ -223,6 +240,38 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({
           )}
         </div>
 
+        {sourceCredentialSpecs.length > 0 && (
+          <div className="space-y-2 rounded-lg border border-amber-200 bg-amber-50/70 p-2.5 dark:border-amber-900/70 dark:bg-amber-950/20">
+            <div className="flex items-center justify-between gap-2">
+              <div className="min-w-0">
+                <p className="text-[11px] font-bold uppercase text-amber-800 dark:text-amber-300">
+                  Data Source Keys
+                </p>
+                <p className="mt-0.5 text-xs font-semibold text-neutral-700 dark:text-neutral-300">
+                  {configuredSourceCredentialFields} of {totalSourceCredentialFields} configured
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={onOpenCredentialsVault}
+                className="shrink-0 rounded-md bg-sky-600 px-2.5 py-1.5 text-[10px] font-bold text-white transition-colors hover:bg-sky-500"
+              >
+                Manage Keys
+              </button>
+            </div>
+            {missingSourceCredentialLabels.length > 0 ? (
+              <p className="text-[10px] leading-relaxed text-amber-800 dark:text-amber-300">
+                Missing: {missingSourceCredentialLabels.slice(0, 3).join(", ")}
+                {missingSourceCredentialLabels.length > 3 ? `, +${missingSourceCredentialLabels.length - 3} more` : ""}
+              </p>
+            ) : (
+              <p className="text-[10px] font-semibold text-emerald-700 dark:text-emerald-400">
+                All declared source credentials are configured.
+              </p>
+            )}
+          </div>
+        )}
+
         {/* SECURE KEY OVERRIDES */}
         <div className="space-y-1.5 pt-2 border-t border-neutral-100 dark:border-neutral-800">
           <button
@@ -254,6 +303,7 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({
                   className="w-full text-sm p-2 border border-neutral-300 dark:border-neutral-700 rounded-md bg-white dark:bg-neutral-900 text-neutral-800 dark:text-neutral-100"
                 />
               </div>
+
             </div>
           )}
         </div>
