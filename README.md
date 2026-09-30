@@ -35,7 +35,7 @@ documentation, and working reference agent implementations.
 
 - Documentation: [GAS documentation site](https://GIBD2015.github.io/Geospatial-Agentic-Services/)
 - Public registry: [GAS Registry](http://geospatial-agentic-services.online/registry)
-- Paper: [Geospatial Agentic Services: A Framework for Interoperable Geospatial Intelligence](https://www.researchgate.net/publication/404738967_Geospatial_Agentic_Services_A_Framework_for_Interoperable_Geospatial_Intelligence)
+- Paper: [Geospatial Agentic Services: A Framework for Interoperable Geospatial Intelligence](https://doi.org/10.1080/19475683.2026.2738374)
 
 ## Getting Started
 
