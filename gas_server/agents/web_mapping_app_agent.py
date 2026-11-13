@@ -804,7 +804,7 @@ Implementation requirements:
       <dt>Interaction</dt><dd>Popups and layer control</dd>
     </dl>
   </aside>
-  {"<div class=\"map-legend\"><strong>Legend</strong><br>Fallback layer colors represent input map layers. Use the layer control to toggle visibility.</div>" if needs_legend else ""}
+  {"<div class='map-legend'><strong>Legend</strong><br>Fallback layer colors represent input map layers. Use the layer control to toggle visibility.</div>" if needs_legend else ""}
   <script>
     const task = {subtitle_json};
     const layers = {layer_json};

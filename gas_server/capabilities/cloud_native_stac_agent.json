@@ -1,0 +1,222 @@
+{
+  "$schema": "https://www.geospatial-agentic-services.online/schemas/describe_agent.schema.json",
+  "profile": {
+    "agent_id": "cloud_native_stac_agent",
+    "name": "Cloud-Native STAC and GeoParquet Agent",
+    "description": "Searches Cloud-Native SpatioTemporal Asset Catalogs (STAC) across Element84 Earth Search and Microsoft Planetary Computer (`sentinel-2-l2a`, `landsat-c2-l2`, `cop-dem-glo-30`, `naip`) and filters GeoParquet/vector spatial datasets by bounding box, cloud cover, and datetime range.",
+    "version": "1.0.0",
+    "base_url": "https://www.geospatial-agentic-services.online/agents/cloud_native_stac_agent",
+    "last_updated": "2026-11-13",
+    "provider": {
+      "name": "Geoinformation and Big Data Research Lab (GIBD)",
+      "website": "https://giscience.psu.edu",
+      "contacts": [
+        {
+          "name": "Zhenlong Li",
+          "email": "zhenlong@psu.edu"
+        }
+      ]
+    },
+    "default_model": "gpt-5.2"
+  },
+  "keywords": [
+    "STAC",
+    "GeoParquet",
+    "Cloud-Native GIS",
+    "Sentinel-2",
+    "Landsat",
+    "Copernicus DEM",
+    "Planetary Computer",
+    "Earth Search"
+  ],
+  "skills": [
+    {
+      "skill_id": "search_stac_catalog",
+      "name": "Search STAC Satellite Catalog",
+      "description": "Queries Element84 Earth Search or Microsoft Planetary Computer STAC endpoints by collection, bounding box, datetime interval, and cloud-cover threshold, exporting scene footprints and COG asset links as GeoJSON, GeoPackage, Parquet, or CSV.",
+      "constraints": {
+        "spatial": "Global coverage across Sentinel-2, Landsat Collection 2, and Copernicus 30m DEM.",
+        "temporal": "Collection-dependent temporal availability.",
+        "other": [
+          "No API key is required for STAC catalog queries.",
+          "Supports GeoJSON, GeoPackage, Parquet, and CSV outputs."
+        ]
+      }
+    },
+    {
+      "skill_id": "filter_cloud_native_geoparquet",
+      "name": "Filter Cloud-Native GeoParquet and Vector Datasets",
+      "description": "Reads GeoParquet, GeoJSON, or GeoPackage input datasets, normalizes CRS to EPSG:4326, extracts bounding-box summaries, and generates static PNG footprint maps and HTML reports.",
+      "constraints": {
+        "other": [
+          "Supports local or URL-delivered GeoParquet, GeoJSON, and GeoPackage files."
+        ]
+      }
+    }
+  ],
+  "execute_task": {
+    "operation_id": "execute_task",
+    "name": "ExecuteTask",
+    "description": "Submits a natural-language STAC catalog search or GeoParquet filtering task to the agent. Supports sync, async, and stream execution modes.",
+    "request_schema": "https://www.geospatial-agentic-services.online/schemas/execute_task_request.schema.json",
+    "response_schema": "https://www.geospatial-agentic-services.online/schemas/task_response.schema.json",
+    "modes": [
+      "sync",
+      "async",
+      "stream"
+    ],
+    "task": {
+      "instructions": {
+        "required": true,
+        "description": "Natural-language instructions such as 'Search Sentinel-2 L2A scenes over State College with less than 20% cloud cover and export GeoParquet.'"
+      }
+    },
+    "inputs": {
+      "input_datasets": {
+        "required": false,
+        "description": "Optional GeoParquet, GeoJSON, or GeoPackage datasets to filter and summarize.",
+        "supported_item_types": [
+          "URL",
+          "server_path",
+          "encoded_file_object"
+        ]
+      }
+    },
+    "outputs": {
+      "artifact_delivery": {
+        "required": false,
+        "default": "URL",
+        "allowed_values": [
+          "URL",
+          "Encoded"
+        ],
+        "description": "How generated artifacts are delivered in the standard response: 'URL' (default) or 'Encoded'."
+      },
+      "primary_artifacts": [
+        {
+          "type": "dataset",
+          "formats": [
+            "GeoJSON",
+            "GeoPackage",
+            "Parquet",
+            "CSV"
+          ],
+          "required": true,
+          "description": "STAC scene footprints or filtered spatial features with scene metadata and COG asset URLs."
+        },
+        {
+          "type": "map",
+          "formats": [
+            "PNG"
+          ],
+          "required": false,
+          "description": "Static PNG footprint map colored by cloud cover or scene coverage."
+        },
+        {
+          "type": "report",
+          "formats": [
+            "HTML"
+          ],
+          "required": false,
+          "description": "HTML summary report listing scene IDs, acquisition dates, cloud cover, and asset counts."
+        }
+      ]
+    },
+    "parameters": {
+      "model": {
+        "required": false,
+        "default": "gpt-5.2",
+        "description": "Optional model override used when LLM-assisted planning is enabled."
+      },
+      "collection": {
+        "required": false,
+        "default": "sentinel-2-l2a",
+        "description": "STAC collection ID such as sentinel-2-l2a, landsat-c2-l2, or cop-dem-glo-30."
+      },
+      "bbox": {
+        "required": false,
+        "description": "Bounding box [min_lon, min_lat, max_lon, max_lat] in WGS84 degrees."
+      },
+      "datetime": {
+        "required": false,
+        "description": "ISO-8601 datetime interval such as 2026-01-01T00:00:00Z/2026-03-01T23:59:59Z."
+      },
+      "max_cloud_cover": {
+        "required": false,
+        "default": 25.0,
+        "description": "Maximum allowed cloud cover percentage (0-100)."
+      },
+      "output_format": {
+        "required": false,
+        "default": "geojson",
+        "allowed_values": [
+          "geojson",
+          "gpkg",
+          "parquet",
+          "csv"
+        ],
+        "description": "Output dataset format."
+      }
+    },
+    "credentials": {
+      "required": false,
+      "one_of": [
+        "none",
+        "OPENAI_API_KEY",
+        "GIBD_API_KEY"
+      ],
+      "description": "No API key is required for deterministic STAC catalog queries and GeoParquet processing."
+    }
+  },
+  "conformance": {
+    "gas_version": "1.0.0",
+    "schemas": {
+      "describe_agent": "https://www.geospatial-agentic-services.online/schemas/describe_agent.schema.json",
+      "task_response": "https://www.geospatial-agentic-services.online/schemas/task_response.schema.json",
+      "execute_task_request": "https://www.geospatial-agentic-services.online/schemas/execute_task_request.schema.json"
+    }
+  },
+  "provenance_and_reproducibility": {
+    "provenance": {
+      "supported": true,
+      "description": "Records STAC catalog endpoint, collection, bounding box, datetime interval, tool-call trace, and output artifact count."
+    },
+    "reproducibility": {
+      "supported": true,
+      "description": "Returns deterministic STAC query parameters, bounding boxes, and environment metadata in the standard GAS response."
+    },
+    "validation": {
+      "supported": true,
+      "description": "Validates that returned STAC footprints or GeoParquet features form a valid EPSG:4326 GeoDataFrame."
+    }
+  },
+  "governance": {
+    "access_control": {
+      "description": "Allowed roles set to ['all'] via the extension profile. No role-based access control is enforced."
+    },
+    "operation_policy": {
+      "description": "Uses deterministic STAC API queries and GeoPandas/PyArrow serialization without arbitrary code execution."
+    },
+    "review_policy": {
+      "description": "output_review_required is set to false."
+    },
+    "policy_notes": "Scene footprints reflect STAC catalog metadata at query time."
+  },
+  "extensions": {
+    "description": "Supports cloud-native STAC discovery across Element84 Earth Search and Microsoft Planetary Computer with GeoJSON, GeoPackage, GeoParquet, CSV, PNG footprint map, and HTML report generation.",
+    "data_sources": [
+      {
+        "source_id": "Element84_Earth_Search",
+        "name": "Element84 Earth Search STAC API",
+        "description": "Public STAC API for Sentinel-2 L2A, Copernicus DEM, Landsat, and NAIP Cloud-Optimized GeoTIFFs.",
+        "credential_required": false
+      },
+      {
+        "source_id": "Microsoft_Planetary_Computer",
+        "name": "Microsoft Planetary Computer STAC API",
+        "description": "Global STAC catalog for environmental and satellite Earth observation datasets.",
+        "credential_required": false
+      }
+    ]
+  }
+}

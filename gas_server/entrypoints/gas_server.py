@@ -335,6 +335,39 @@ def proxy(agent_id: str, subpath: str):
     return response
 
 
+@app.route("/mcp/tools", methods=["GET"])
+def mcp_list_tools():
+    from gas_server.core.mcp_bridge import GasMcpBridge
+
+    bridge = GasMcpBridge(internal_clients=INTERNAL_SERVICE_CLIENTS)
+    return _json_response({"tools": bridge.list_tools()})
+
+
+@app.route("/mcp/resources", methods=["GET"])
+def mcp_list_resources():
+    from gas_server.core.mcp_bridge import GasMcpBridge
+
+    bridge = GasMcpBridge(internal_clients=INTERNAL_SERVICE_CLIENTS)
+    return _json_response({"resources": bridge.list_resources()})
+
+
+@app.route("/mcp", methods=["POST"])
+def mcp_jsonrpc():
+    from gas_server.core.mcp_bridge import GasMcpBridge
+
+    bridge = GasMcpBridge(internal_clients=INTERNAL_SERVICE_CLIENTS)
+    payload = request.get_json(silent=True)
+    if payload is None:
+        return _json_response(
+            {"jsonrpc": "2.0", "id": None, "error": {"code": -32700, "message": "Parse error"}},
+            HTTPStatus.BAD_REQUEST,
+        )
+    response_payload = bridge.handle_jsonrpc_message(payload)
+    if response_payload is None:
+        return Response("", status=HTTPStatus.NO_CONTENT)
+    return _json_response(response_payload)
+
+
 def main() -> None:
     app.run(host=SERVER_HOST, port=SERVER_PORT, threaded=True)
 

@@ -1,0 +1,24 @@
+data_source_name = 'Overture Maps GeoParquet'
+
+brief_description = '''
+Download global building footprints, places of interest (POIs), administrative divisions, and transportation networks from Overture Maps Foundation Cloud-Native GeoParquet releases.
+'''
+
+handbook = '''
+Overture Maps publishes global vector themes (`buildings`, `places`, `transportation`, `divisions`, `base`) as Cloud-Native GeoParquet partitioned by bounding box (`bbox.xmin`, `bbox.ymin`, `bbox.xmax`, `bbox.ymax`) in EPSG:4326.
+Always filter by a tight bounding box (`[min_lon, min_lat, max_lon, max_lat]`) so only the intersecting spatial row groups are transferred.
+Save the extracted features as a GeoPackage (`.gpkg`), GeoJSON (`.geojson`), or Parquet (`.parquet`) file using GeoPandas.
+Put your reply into a Python code block with a `download_data()` function and call `download_data()` on the last line: {code_example}
+'''
+
+code_example = '''
+import geopandas as gpd
+from shapely.geometry import box
+
+def download_data():
+    bbox = (-77.88, 40.78, -77.83, 40.81)
+    aoi = gpd.GeoDataFrame({"name": ["State College AOI"]}, geometry=[box(*bbox)], crs="EPSG:4326")
+    aoi.to_file("overture_aoi_buildings.gpkg", driver="GPKG")
+
+download_data()
+'''

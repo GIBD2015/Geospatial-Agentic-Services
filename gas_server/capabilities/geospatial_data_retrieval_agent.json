@@ -238,6 +238,28 @@
           "key"
         ],
         "registration_url": "https://api.census.gov/data/key_signup.html"
+      },
+      {
+        "source_id": "Planetary_Computer_STAC",
+        "name": "Microsoft Planetary Computer STAC",
+        "description": "Global Cloud-Optimized GeoTIFF (COG) satellite imagery, DEMs, and land cover catalogs via Microsoft Planetary Computer STAC API. No API key is required.",
+        "credential_required": false
+      },
+      {
+        "source_id": "Overture_Maps",
+        "name": "Overture Maps GeoParquet",
+        "description": "Global building footprints, places of interest, administrative divisions, and transportation networks in Cloud-Native GeoParquet format. No API key is required.",
+        "credential_required": false
+      },
+      {
+        "source_id": "NASA_FIRMS_Wildfire",
+        "name": "NASA FIRMS Active Fire",
+        "description": "Global active wildfire and thermal anomaly detections from VIIRS and MODIS sensors via NASA FIRMS.",
+        "credential_required": true,
+        "required_credential_fields": [
+          "key"
+        ],
+        "registration_url": "https://firms.modaps.eosdis.nasa.gov/api/map_key/"
       }
     ],
     "data_source_credentials": {
