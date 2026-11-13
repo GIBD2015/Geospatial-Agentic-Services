@@ -165,6 +165,57 @@ def run_task():
     except Exception as e:
         return jsonify({"error": f"Execution error on agent {agent_id}", "details": str(e)}), 500
 
+
+@app.route("/api/gas/validate-workflow-dag", methods=["POST"])
+def validate_workflow_dag():
+    from gas_server.core.workflow_dag_executor import GasWorkflowDagExecutor, WorkflowDagError
+
+    body = request.get_json() or {}
+    plan = body.get("plan") if isinstance(body.get("plan"), dict) else body
+    try:
+        validation = GasWorkflowDagExecutor.build_and_validate_dag(plan)
+        return jsonify(validation)
+    except WorkflowDagError as err:
+        return jsonify({"valid": False, "error": str(err)}), 400
+    except Exception as err:
+        return jsonify({"valid": False, "error": "Failed to validate workflow DAG", "details": str(err)}), 500
+
+
+@app.route("/api/gas/execute-workflow-dag", methods=["POST"])
+def execute_workflow_dag():
+    from gas_server.core.workflow_dag_executor import GasWorkflowDagExecutor, WorkflowDagError
+
+    body = request.get_json() or {}
+    plan = body.get("plan") if isinstance(body.get("plan"), dict) else body
+    auto_heal_crs = bool(body.get("autoHealCrs", True))
+    server_url = str(body.get("serverUrl") or "").strip().rstrip("/")
+
+    def _remote_or_local_runner(step_req):
+        if not server_url:
+            return executor._default_internal_step_runner(step_req)
+        options = {
+            "mode": "sync",
+            "inputDatasets": step_req.get("input_datasets") or [],
+            "parameters": step_req.get("parameters") or {},
+            "credentials": step_req.get("credentials") or {},
+        }
+        task_payload = build_execute_task_request(step_req["instructions"], options)
+        resp = requests.post(f"{server_url}/agents/{step_req['agent_id']}/tasks", json=task_payload, timeout=300)
+        resp.raise_for_status()
+        return resp.json()
+
+    executor = GasWorkflowDagExecutor(auto_heal_crs=auto_heal_crs)
+    if server_url:
+        executor.step_runner = _remote_or_local_runner
+
+    try:
+        result = executor.execute(plan)
+        return jsonify(result)
+    except WorkflowDagError as err:
+        return jsonify({"status": "failed", "error": str(err)}), 400
+    except Exception as err:
+        return jsonify({"status": "failed", "error": "Workflow DAG execution failed", "details": str(err)}), 500
+
 @app.route("/api/parse-gpkg", methods=["GET"])
 def parse_gpkg():
     gpkg_url = request.args.get("url")

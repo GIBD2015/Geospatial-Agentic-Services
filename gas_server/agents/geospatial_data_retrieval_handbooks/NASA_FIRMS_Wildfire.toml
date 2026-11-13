@@ -1,0 +1,30 @@
+data_source_name = 'NASA FIRMS Active Fire'
+
+brief_description = '''
+Download global active wildfire and thermal anomaly detections (VIIRS and MODIS) from NASA Fire Information for Resource Management System (FIRMS).
+'''
+
+handbook = '''
+NASA FIRMS provides active fire and thermal anomaly detections from VIIRS (Suomi NPP, NOAA-20, NOAA-21) and MODIS (Aqua, Terra) sensors with latitude, longitude, brightness temperature, FRP (Fire Radiative Power), confidence, and acquisition date/time.
+If a FIRMS `MAP_KEY` is provided in `credentials.source_credentials.NASA_FIRMS_Wildfire`, use placeholder `{NASA_FIRMS_Wildfire_key}` in the area CSV API endpoint `https://firms.modaps.eosdis.nasa.gov/api/area/csv/{NASA_FIRMS_Wildfire_key}/VIIRS_SNPP_NRT/{west},{south},{east},{north}/1`.
+Convert `longitude` and `latitude` columns into `Point` geometries in `EPSG:4326` using GeoPandas.
+Put your reply into a Python code block with a `download_data()` function and call `download_data()` on the last line: {code_example}
+'''
+
+code_example = '''
+import pandas as pd
+import geopandas as gpd
+from shapely.geometry import Point
+
+def download_data():
+    url = "https://firms.modaps.eosdis.nasa.gov/api/area/csv/{NASA_FIRMS_Wildfire_key}/VIIRS_SNPP_NRT/-124.5,32.5,-114.1,42.0/1"
+    df = pd.read_csv(url)
+    gdf = gpd.GeoDataFrame(
+        df,
+        geometry=[Point(xy) for xy in zip(df["longitude"], df["latitude"])],
+        crs="EPSG:4326",
+    )
+    gdf.to_file("nasa_firms_fires.gpkg", driver="GPKG")
+
+download_data()
+'''

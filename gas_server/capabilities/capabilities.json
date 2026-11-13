@@ -144,6 +144,11 @@
       "agent_id": "vector_analysis_agent",
       "name": "Vector Analysis Agent",
       "DescribeAgent": "https://www.geospatial-agentic-services.online/?SERVICE=GAS&VERSION=1.0.0&REQUEST=DescribeAgent&agent_id=vector_analysis_agent"
+    },
+    {
+      "agent_id": "cloud_native_stac_agent",
+      "name": "Cloud-Native STAC and GeoParquet Agent",
+      "DescribeAgent": "https://www.geospatial-agentic-services.online/?SERVICE=GAS&VERSION=1.0.0&REQUEST=DescribeAgent&agent_id=cloud_native_stac_agent"
     }
   ]
 }

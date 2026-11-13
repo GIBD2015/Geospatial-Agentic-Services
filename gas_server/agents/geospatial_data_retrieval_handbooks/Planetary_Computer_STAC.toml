@@ -1,0 +1,47 @@
+data_source_name = 'Microsoft Planetary Computer STAC'
+
+brief_description = '''
+Search and download Cloud-Optimized GeoTIFF (COG) satellite imagery, DEMs, and land cover rasters from the Microsoft Planetary Computer STAC catalog (Sentinel-2 L2A, Copernicus DEM 30m, NAIP, IO LULC).
+'''
+
+handbook = '''
+Use the Microsoft Planetary Computer STAC API endpoint (`https://planetarycomputer.microsoft.com/api/stac/v1/search`) via `requests.post` with a JSON body containing `collections`, `bbox` (`[min_lon, min_lat, max_lon, max_lat]`), `datetime`, and `limit`.
+No API key is required for STAC metadata search.
+Common collection IDs: `sentinel-2-l2a` (10m optical), `cop-dem-glo-30` (30m global DEM), `landsat-c2-l2` (30m multispectral), `io-lulc-annual-v02` (10m global land cover).
+Parse the returned GeoJSON FeatureCollection into a GeoDataFrame (`gpd.GeoDataFrame.from_features(data["features"], crs="EPSG:4326")`) and retain scene IDs, acquisition datetime, `eo:cloud_cover`, and asset hrefs.
+Put your reply into a Python code block with a `download_data()` function and call `download_data()` on the last line: {code_example}
+'''
+
+code_example = '''
+import geopandas as gpd
+import requests
+from shapely.geometry import shape
+
+def download_data():
+    stac_url = "https://planetarycomputer.microsoft.com/api/stac/v1/search"
+    payload = {
+        "collections": ["sentinel-2-l2a"],
+        "bbox": [-77.95, 40.72, -77.75, 40.86],
+        "datetime": "2025-06-01T00:00:00Z/2025-08-31T23:59:59Z",
+        "limit": 10,
+        "query": {"eo:cloud_cover": {"lte": 20}}
+    }
+    resp = requests.post(stac_url, json=payload, timeout=60)
+    resp.raise_for_status()
+    features = resp.json().get("features", [])
+    rows = []
+    geoms = []
+    for item in features:
+        props = item.get("properties", {})
+        rows.append({
+            "id": item.get("id"),
+            "datetime": props.get("datetime"),
+            "cloud_cover": props.get("eo:cloud_cover"),
+            "visual_url": item.get("assets", {}).get("visual", {}).get("href", "")
+        })
+        geoms.append(shape(item["geometry"]))
+    gdf = gpd.GeoDataFrame(rows, geometry=geoms, crs="EPSG:4326")
+    gdf.to_file("planetary_computer_scenes.gpkg", driver="GPKG")
+
+download_data()
+'''
